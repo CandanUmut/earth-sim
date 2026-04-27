@@ -2,6 +2,9 @@ import { useEffect } from 'react';
 import WorldMap from './components/WorldMap';
 import CountryInfoPanel from './components/CountryInfoPanel';
 import Header from './components/Header';
+import StartScreen from './components/StartScreen';
+import TimeControls from './components/TimeControls';
+import PlayerHUD from './components/PlayerHUD';
 import { useGameStore } from './store/gameStore';
 
 export default function App() {
@@ -16,7 +19,10 @@ export default function App() {
     <div className="relative h-full w-full overflow-hidden">
       <WorldMap />
       <Header />
+      <PlayerHUD />
       <CountryInfoPanel />
+      <TimeControls />
+      <StartScreen />
       {error && (
         <div
           className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2"

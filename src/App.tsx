@@ -8,6 +8,7 @@ import PlayerHUD from './components/PlayerHUD';
 import SendTroopsModal from './components/SendTroopsModal';
 import BattleLog from './components/BattleLog';
 import EndScreen from './components/EndScreen';
+import Tutorial from './components/Tutorial';
 import { useGameStore } from './store/gameStore';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
       <BattleLog />
       <SendTroopsModal />
       <StartScreen />
+      <Tutorial />
       <EndScreen />
       {error && (
         <div

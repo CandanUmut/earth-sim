@@ -29,6 +29,13 @@ import {
 } from '../game/movement';
 import { type VictoryState } from '../game/victory';
 import { BALANCE, BALANCE_MOVEMENT, BALANCE_CONTROL } from '../game/balance';
+import {
+  writeSave,
+  readSave,
+  clearSave,
+  summarizeSave,
+  type SaveSummary,
+} from './persistence';
 
 export type Speed = 1 | 2 | 3;
 
@@ -66,6 +73,7 @@ export type GameState = {
   hoveredCountryId: string | null;
   battleLogOpen: boolean;
   dispatchTargetId: string | null;
+  savedSummary: SaveSummary | null;
 
   // Actions
   loadInitialWorld: () => Promise<void>;
@@ -89,6 +97,8 @@ export type GameState = {
   dismissEndScreen: () => void;
   newCampaign: () => void;
   pruneTrails: () => void;
+  resumeCampaign: () => void;
+  saveNow: () => void;
 };
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -147,6 +157,7 @@ const initialState = {
   hoveredCountryId: null as string | null,
   battleLogOpen: false,
   dispatchTargetId: null as string | null,
+  savedSummary: null as SaveSummary | null,
 };
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -181,6 +192,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         geo,
         loaded: true,
         loading: false,
+        savedSummary: summarizeSave(),
       });
     } catch (err) {
       set({
@@ -313,6 +325,29 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     if (result.victory.kind !== 'ongoing') {
       clearTickInterval();
+      clearSave();
+      set({ savedSummary: null });
+    } else if ((s.tickCount + 1) % 10 === 0) {
+      // Auto-save every 10 ticks.
+      const now = get();
+      writeSave({
+        version: 1,
+        savedAt: Date.now(),
+        ownership: now.ownership,
+        nations: now.nations,
+        brains: now.brains,
+        control: now.control,
+        lastBattleTick: now.lastBattleTick,
+        movements: now.movements,
+        battleLog: now.battleLog,
+        date: now.date,
+        tickCount: now.tickCount,
+        playerCountryId: now.playerCountryId,
+        homeCountryId: now.homeCountryId,
+        speed: now.speed,
+        victory: now.victory,
+      });
+      set({ savedSummary: summarizeSave() });
     }
   },
 
@@ -436,6 +471,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   newCampaign: () => {
     clearTickInterval();
+    clearSave();
     const { countries, countryOrder, geo } = get();
     const ownership: Record<string, string> = {};
     const nations: Record<string, Nation> = {};
@@ -459,6 +495,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       brains,
       control,
       loaded: true,
+      savedSummary: null,
     });
   },
 
@@ -469,6 +506,54 @@ export const useGameStore = create<GameState>((set, get) => ({
         (t) => now - t.arrivedAt < BALANCE_MOVEMENT.arrivalTrailMs,
       ),
     });
+  },
+
+  resumeCampaign: () => {
+    const save = readSave();
+    if (!save || !save.playerCountryId) return;
+    set({
+      ownership: save.ownership,
+      nations: save.nations,
+      brains: save.brains,
+      control: save.control,
+      lastBattleTick: save.lastBattleTick,
+      movements: save.movements,
+      battleLog: save.battleLog,
+      arrivalTrails: [],
+      date: save.date,
+      tickCount: save.tickCount,
+      playerCountryId: save.playerCountryId,
+      homeCountryId: save.homeCountryId,
+      speed: save.speed,
+      victory: save.victory,
+      gameStarted: true,
+      paused: false,
+      selectedCountryId: null,
+    });
+    ensureTickInterval(get);
+  },
+
+  saveNow: () => {
+    const s = get();
+    if (!s.gameStarted || !s.playerCountryId) return;
+    writeSave({
+      version: 1,
+      savedAt: Date.now(),
+      ownership: s.ownership,
+      nations: s.nations,
+      brains: s.brains,
+      control: s.control,
+      lastBattleTick: s.lastBattleTick,
+      movements: s.movements,
+      battleLog: s.battleLog,
+      date: s.date,
+      tickCount: s.tickCount,
+      playerCountryId: s.playerCountryId,
+      homeCountryId: s.homeCountryId,
+      speed: s.speed,
+      victory: s.victory,
+    });
+    set({ savedSummary: summarizeSave() });
   },
 }));
 

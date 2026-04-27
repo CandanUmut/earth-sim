@@ -21,10 +21,11 @@ function fmtTroops(n: number): string {
  */
 function labelFontSize(geoArea: number): number {
   const r = Math.sqrt(Math.max(0.0001, geoArea));
-  if (r > 0.25) return 9; // continent-scale: Russia, China, USA, Brazil, Canada
-  if (r > 0.10) return 6.5;
-  if (r > 0.04) return 4.5;
-  return 3; // tiny — only legible when zoomed in
+  if (r > 0.25) return 14; // continent-scale: Russia, China, USA, Brazil, Canada
+  if (r > 0.10) return 10;
+  if (r > 0.04) return 7;
+  if (r > 0.01) return 5;
+  return 4; // micro — only really legible when zoomed in
 }
 
 function badgeColor(args: {
@@ -119,23 +120,23 @@ export default function CountryAnnotations({ projection }: Props) {
             {troops > 0 && (
               <g>
                 <rect
-                  x={-Math.max(7, fmtTroops(troops).length * 1.6)}
-                  y={1}
-                  width={Math.max(14, fmtTroops(troops).length * 3.2)}
-                  height={5}
-                  rx={1}
+                  x={-Math.max(10, fmtTroops(troops).length * 2.2)}
+                  y={2}
+                  width={Math.max(20, fmtTroops(troops).length * 4.4)}
+                  height={7}
+                  rx={1.5}
                   fill="var(--paper)"
                   stroke={color}
-                  strokeWidth={0.4}
+                  strokeWidth={0.5}
                   vectorEffect="non-scaling-stroke"
                 />
                 <text
                   x={0}
-                  y={5}
+                  y={7.4}
                   textAnchor="middle"
                   fontFamily='"JetBrains Mono", monospace'
-                  fontWeight={500}
-                  fontSize={3.6}
+                  fontWeight={600}
+                  fontSize={5}
                   fill={color}
                 >
                   {fmtTroops(troops)}
@@ -147,20 +148,20 @@ export default function CountryAnnotations({ projection }: Props) {
             {contested && (
               <g>
                 <rect
-                  x={-8}
-                  y={7}
-                  width={16}
-                  height={1.4}
+                  x={-12}
+                  y={11}
+                  width={24}
+                  height={2}
                   fill="var(--paper)"
                   stroke="var(--accent-blood)"
-                  strokeWidth={0.3}
+                  strokeWidth={0.4}
                   vectorEffect="non-scaling-stroke"
                 />
                 <rect
-                  x={-8}
-                  y={7}
-                  width={(16 * ctrl) / BALANCE_CONTROL.fullControl}
-                  height={1.4}
+                  x={-12}
+                  y={11}
+                  width={(24 * ctrl) / BALANCE_CONTROL.fullControl}
+                  height={2}
                   fill="var(--accent-blood)"
                 />
               </g>

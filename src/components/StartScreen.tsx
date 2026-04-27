@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { countryFill } from '../game/world';
+import { formatDate } from '../game/tick';
 
 function formatPop(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)} B`;
@@ -20,8 +21,14 @@ export default function StartScreen() {
     s.selectedCountryId ? s.nations[s.selectedCountryId] : null,
   );
   const startCampaign = useGameStore((s) => s.startCampaign);
+  const savedSummary = useGameStore((s) => s.savedSummary);
+  const resumeCampaign = useGameStore((s) => s.resumeCampaign);
+  const countries = useGameStore((s) => s.countries);
 
   const show = loaded && !gameStarted;
+  const savedCountry = savedSummary?.playerCountryId
+    ? countries[savedSummary.playerCountryId]
+    : null;
 
   return (
     <AnimatePresence>
@@ -137,25 +144,72 @@ export default function StartScreen() {
               )}
             </div>
 
-            <button
-              type="button"
-              disabled={!selectedId}
-              onClick={() => selectedId && startCampaign(selectedId)}
-              style={{
-                background: selectedId ? 'var(--ink)' : 'transparent',
-                color: selectedId ? 'var(--paper)' : 'var(--ink-faded)',
-                border: '1px solid var(--ink)',
-                padding: '10px 28px',
-                fontFamily: '"Crimson Pro", serif',
-                fontSize: 18,
-                letterSpacing: '0.04em',
-                cursor: selectedId ? 'pointer' : 'not-allowed',
-                opacity: selectedId ? 1 : 0.5,
-                transition: 'all 200ms ease',
-              }}
-            >
-              Begin Campaign
-            </button>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button
+                type="button"
+                disabled={!selectedId}
+                onClick={() => selectedId && startCampaign(selectedId)}
+                style={{
+                  background: selectedId ? 'var(--ink)' : 'transparent',
+                  color: selectedId ? 'var(--paper)' : 'var(--ink-faded)',
+                  border: '1px solid var(--ink)',
+                  padding: '10px 28px',
+                  fontFamily: '"Crimson Pro", serif',
+                  fontSize: 18,
+                  letterSpacing: '0.04em',
+                  cursor: selectedId ? 'pointer' : 'not-allowed',
+                  opacity: selectedId ? 1 : 0.5,
+                  transition: 'all 200ms ease',
+                }}
+              >
+                Begin Campaign
+              </button>
+            </div>
+
+            {savedSummary && savedCountry && (
+              <div
+                style={{
+                  marginTop: 18,
+                  paddingTop: 14,
+                  borderTop: '1px dashed var(--ink-faded)',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11,
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                    color: 'var(--ink-faded)',
+                    marginBottom: 6,
+                  }}
+                >
+                  Resume Saved Campaign
+                </div>
+                <div style={{ fontSize: 13, fontStyle: 'italic', marginBottom: 10 }}>
+                  {savedCountry.name} ·{' '}
+                  <span className="num">{formatDate(savedSummary.date)}</span>
+                  {savedSummary.conquered > 0 && (
+                    <> · {savedSummary.conquered} conquered</>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={resumeCampaign}
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--ink)',
+                    border: '1px solid var(--ink)',
+                    padding: '8px 22px',
+                    fontFamily: '"Crimson Pro", serif',
+                    fontSize: 14,
+                    letterSpacing: '0.04em',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Continue
+                </button>
+              </div>
+            )}
           </motion.div>
         </motion.div>
       )}

@@ -50,11 +50,6 @@ export default function WorldMap() {
       .scaleExtent([1, 8])
       .on('zoom', (event) => {
         g.attr('transform', event.transform.toString());
-        // Keep stroke width visually constant under zoom.
-        g.selectAll<SVGPathElement, unknown>('path.country').attr(
-          'stroke-width',
-          0.5 / event.transform.k,
-        );
       });
     svg.call(zoom);
     return () => {
@@ -62,28 +57,28 @@ export default function WorldMap() {
     };
   }, []);
 
-  // Update strokes when selection / hover changes.
+  // Update strokes when selection / hover changes. We render paths via React,
+  // so D3 has no bound datum — read the id from each element's data-id attr.
   useEffect(() => {
     if (!gRef.current) return;
-    const g = d3.select(gRef.current);
-    g.selectAll<SVGPathElement, Feature<Geometry, { id?: string }>>('path.country')
-      .attr('stroke', (d) => {
-        const id = (d as unknown as { id: string }).id;
-        if (id === selectedId) return 'var(--accent-gold)';
-        if (id === hoveredId) return 'var(--ink)';
-        return 'var(--ink)';
-      })
-      .attr('stroke-width', (d) => {
-        const id = (d as unknown as { id: string }).id;
-        if (id === selectedId) return 1.6;
-        if (id === hoveredId) return 1.2;
-        return 0.5;
-      })
-      .attr('stroke-opacity', (d) => {
-        const id = (d as unknown as { id: string }).id;
-        if (id === selectedId || id === hoveredId) return 0.95;
-        return 0.55;
-      });
+    const paths = gRef.current.querySelectorAll<SVGPathElement>('path.country');
+    paths.forEach((el) => {
+      const id = el.dataset.id ?? '';
+      const isSelected = id === selectedId;
+      const isHovered = id === hoveredId;
+      el.setAttribute(
+        'stroke',
+        isSelected ? 'var(--accent-gold)' : 'var(--ink)',
+      );
+      el.setAttribute(
+        'stroke-width',
+        String(isSelected ? 1.6 : isHovered ? 1.2 : 0.5),
+      );
+      el.setAttribute(
+        'stroke-opacity',
+        String(isSelected || isHovered ? 0.95 : 0.55),
+      );
+    });
   }, [selectedId, hoveredId]);
 
   if (!geo || !pathD) {
@@ -128,6 +123,7 @@ export default function WorldMap() {
                 stroke="var(--ink)"
                 strokeWidth={0.5}
                 strokeOpacity={0.55}
+                vectorEffect="non-scaling-stroke"
                 style={{ cursor: 'pointer', transition: 'fill 600ms ease' }}
                 onMouseEnter={(e) => {
                   setHovered(id);

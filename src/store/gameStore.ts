@@ -333,11 +333,6 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   tick: () => {
     const s = get();
-    const playerNation = s.playerCountryId ? s.nations[s.playerCountryId] : null;
-    const playerAutoRecruit =
-      !!playerNation &&
-      playerNation.autoRecruit &&
-      playerNation.unlockedTech.includes('log_conscription');
     const result = runTick({
       date: s.date,
       tickCount: s.tickCount + 1,
@@ -352,7 +347,6 @@ export const useGameStore = create<GameState>((set, get) => ({
       movements: s.movements,
       playerCountryId: s.playerCountryId,
       homeCountryId: s.homeCountryId,
-      playerAutoRecruit,
       rng: Math.random,
     });
 

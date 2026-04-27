@@ -77,15 +77,13 @@ export default function SendTroopsModal() {
     });
   }, [targetId, availableByType.infantry, availableByType.cavalry, availableByType.artillery]);
 
-  if (!targetId || !target || !player) return <AnimatePresence />;
-
   const totalSend = send.infantry + send.cavalry + send.artillery;
   const defenderTotal = targetNation ? totalTroops(targetNation) : 0;
 
   // ---- Battle preview ----
+  // (Must be declared above the early-return so hook order stays stable.)
   const preview = useMemo(() => {
     if (!player || !target) return null;
-    const oppTotal = defenderTotal;
     const sendTotal = totalSend;
     if (sendTotal === 0) return null;
     const defComp = targetNation
@@ -162,11 +160,12 @@ export default function SendTroopsModal() {
       verdict,
       color,
       defenseMul,
-      oppTotal,
       sendTotal,
     };
   }, [player, target, targetNation, defenderTotal, send, totalSend]);
   // ----
+
+  if (!targetId || !target || !player) return <AnimatePresence />;
 
   return (
     <AnimatePresence>

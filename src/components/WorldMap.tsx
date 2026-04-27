@@ -64,9 +64,10 @@ export default function WorldMap() {
     return { projection, path };
   }, [geo, w, h]);
 
-  // Pan/zoom binding. Re-bind when viewport size changes so extents stay
-  // sane. Wheel events on Windows trackpads emit huge deltaY values; we
-  // explicitly normalize to keep zoom step predictable.
+  // Pan/zoom. d3.zoom handles drag; we bypass its wheel handling because
+  // browsers default wheel listeners to passive (which prevents
+  // preventDefault). We attach our own non-passive wheel listener and drive
+  // the same d3 transform programmatically.
   useEffect(() => {
     if (!svgRef.current || !gRef.current) return;
     const svgEl = svgRef.current;
@@ -75,26 +76,37 @@ export default function WorldMap() {
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.6, 12])
-      .extent([
-        [0, 0],
-        [w, h],
-      ])
       .filter((event) => {
-        // Allow wheel always (no ctrl required); allow primary mouse drag.
-        if (event.type === 'wheel') return true;
+        // Drag only (primary button). Wheel is handled by the native listener
+        // below — letting d3 also wire up wheel double-fires the zoom.
         if (event.type === 'mousedown' || event.type === 'pointerdown')
           return event.button === 0;
-        return !event.ctrlKey && !event.button;
-      })
-      .wheelDelta((event: WheelEvent) => {
-        // d3's default normalizes by deltaMode; this is the recommended pattern.
-        return -event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002);
+        return false;
       })
       .on('zoom', (event) => {
         gSel.attr('transform', event.transform.toString());
       });
     sel.call(zoom);
-    // Cursor feedback so users know it's grabbable.
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const t = d3.zoomTransform(svgEl);
+      const direction = e.deltaY < 0 ? 1 : -1;
+      const factor = Math.pow(1.2, direction);
+      const newK = Math.max(0.6, Math.min(12, t.k * factor));
+      if (newK === t.k) return;
+      const rect = svgEl.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const newTx = mx - ((mx - t.x) * newK) / t.k;
+      const newTy = my - ((my - t.y) * newK) / t.k;
+      sel.call(
+        zoom.transform,
+        d3.zoomIdentity.translate(newTx, newTy).scale(newK),
+      );
+    };
+    svgEl.addEventListener('wheel', onWheel, { passive: false });
+
     svgEl.style.cursor = 'grab';
     sel.on('mousedown.cursor', () => {
       svgEl.style.cursor = 'grabbing';
@@ -106,6 +118,7 @@ export default function WorldMap() {
       sel.on('.zoom', null);
       sel.on('mousedown.cursor', null);
       sel.on('mouseup.cursor', null);
+      svgEl.removeEventListener('wheel', onWheel);
     };
   }, [w, h]);
 

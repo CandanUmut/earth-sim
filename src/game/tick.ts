@@ -2,7 +2,6 @@ import type { Country } from './world';
 import {
   goldPerTick,
   troopUpkeepPerTick,
-  maxTroops,
   recruitCost,
   techInvestmentCost,
   techIncrement,
@@ -24,6 +23,7 @@ import {
   decideAction,
   evaluateAllianceProposal,
   evaluatePeaceProposal,
+  DOCTRINE_MIX,
   type AIAction,
   type AIBrain,
 } from './ai';
@@ -32,8 +32,13 @@ import {
   BALANCE,
   BALANCE_MOVEMENT,
   BALANCE_CONTROL,
-  BALANCE_TROOPS,
 } from './balance';
+import {
+  autoRecruitUnlocked,
+  autoRecruitInterval,
+  autoRecruitThreshold,
+  autoRecruitMixVariance,
+} from './techTree';
 
 export type GameDate = { year: number; month: number };
 
@@ -72,7 +77,6 @@ export type BattleLogEntry = {
   defenderLosses: LossesByType;
   totalAttackerLosses: number;
   totalDefenderLosses: number;
-  /** Total troops on each side as the battle began. Used to size animations. */
   attackerTroopsBefore: number;
   defenderTroopsBefore: number;
   attackerWon: boolean;
@@ -105,8 +109,6 @@ export type TickInput = {
   movements: TroopMovement[];
   playerCountryId: string | null;
   homeCountryId: string | null;
-  /** Whether the player has unlocked auto-recruit (logistics tech). */
-  playerAutoRecruit: boolean;
   rng: () => number;
 };
 
@@ -155,7 +157,6 @@ function applyEconomy(
     let cavalry = nation.cavalry;
     let artillery = nation.artillery;
     if (gold < 0) {
-      // Desertion proportional across composition.
       const desertion = Math.ceil(-gold * 8);
       const total = totalTroops(nation);
       if (total > 0) {
@@ -235,6 +236,139 @@ function subtractLossesFromNation(
   };
 }
 
+function growPopulations(
+  populations: Record<string, number>,
+): Record<string, number> {
+  const next: Record<string, number> = {};
+  for (const [id, pop] of Object.entries(populations)) {
+    next[id] = Math.round(pop * (1 + BALANCE.populationGrowthPerTick));
+  }
+  return next;
+}
+
+/** Simple deterministic hash for spreading auto-recruit cadence per nation. */
+function idHash(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
+}
+
+/**
+ * Threshold + interval based auto-recruit. Each nation has a "fire tick"
+ * derived from its id so the world isn't synchronized. When the fire tick
+ * comes around AND treasury exceeds the (tech-modified) threshold, the
+ * nation spends a randomized portion of its surplus on troops in a
+ * randomized but doctrine-leaning mix.
+ *
+ * Player only participates if Conscription Office is unlocked AND the
+ * `autoRecruit` flag is on.
+ */
+function autoRecruitCycle(
+  countries: Record<string, Country>,
+  populations: Record<string, number>,
+  nations: Record<string, Nation>,
+  brains: Record<string, AIBrain>,
+  tickCount: number,
+  playerCountryId: string | null,
+  rng: () => number,
+): Record<string, Nation> {
+  let updated = nations;
+  for (const [id, nation] of Object.entries(nations)) {
+    const country = countries[id];
+    if (!country) continue;
+
+    const isPlayer = id === playerCountryId;
+    if (isPlayer) {
+      // Player must explicitly enable AND have Conscription unlocked.
+      if (!nation.autoRecruit) continue;
+      if (!autoRecruitUnlocked(nation.unlockedTech)) continue;
+    }
+
+    const tech = nation.unlockedTech;
+    // AI uses the base interval/threshold even without tech (the player only
+    // gets these via tech). This gives the world enough army growth.
+    const interval = isPlayer ? autoRecruitInterval(tech) : 18;
+    const threshold = isPlayer ? autoRecruitThreshold(tech) : 350;
+    const variance = isPlayer ? autoRecruitMixVariance(tech) : 0.35;
+
+    const fireTick = idHash(id) % interval;
+    if (tickCount % interval !== fireTick) continue;
+    if (nation.gold < threshold) continue;
+
+    const pop = populations[id] ?? country.population;
+    const martialMul = country.specializations.includes('martial') ? 1.25 : 1;
+    const cap = Math.floor(pop * BALANCE.maxTroopsPerPopulation * martialMul);
+    const total = nation.infantry + nation.cavalry + nation.artillery;
+    if (total >= cap) continue;
+
+    // Spend a randomized portion of the surplus (threshold acts as a
+    // reserve floor — we never go below it).
+    const surplus = nation.gold - threshold;
+    if (surplus <= 0) continue;
+    const spend = surplus * (0.45 + rng() * 0.4); // 45–85 %
+
+    // Doctrine mix: AI by personality; player gets balanced 60/30/10 unless
+    // they're more advanced (Standing Army → 50/30/20).
+    const baseMix = brains[id]
+      ? DOCTRINE_MIX[brains[id].personality]
+      : { infantry: 0.6, cavalry: 0.3, artillery: 0.1 };
+    const jitter = (k: number) =>
+      Math.max(0, k + (rng() * 2 - 1) * variance);
+    const j: Record<keyof typeof baseMix, number> = {
+      infantry: jitter(baseMix.infantry),
+      cavalry: jitter(baseMix.cavalry),
+      artillery: jitter(baseMix.artillery),
+    };
+    const sum = j.infantry + j.cavalry + j.artillery || 1;
+    const mix = {
+      infantry: j.infantry / sum,
+      cavalry: j.cavalry / sum,
+      artillery: j.artillery / sum,
+    };
+
+    const infCost = recruitCost('infantry', country.specializations, tech);
+    const cavCost = recruitCost('cavalry', country.specializations, tech);
+    const artCost = recruitCost('artillery', country.specializations, tech);
+
+    let goldLeft = spend;
+    let addInf = 0;
+    let addCav = 0;
+    let addArt = 0;
+    const tryBuy = (cost: number, portion: number, kind: 'i' | 'c' | 'a') => {
+      const budget = goldLeft * portion;
+      const n = Math.floor(budget / cost);
+      if (n <= 0) return;
+      const room = cap - (total + addInf + addCav + addArt);
+      const buy = Math.min(n, Math.max(0, room));
+      if (buy <= 0) return;
+      if (kind === 'i') addInf += buy;
+      else if (kind === 'c') addCav += buy;
+      else addArt += buy;
+      goldLeft -= buy * cost;
+    };
+    tryBuy(infCost, mix.infantry, 'i');
+    tryBuy(cavCost, mix.cavalry, 'c');
+    tryBuy(artCost, mix.artillery, 'a');
+
+    if (addInf + addCav + addArt === 0) continue;
+    const goldSpent = addInf * infCost + addCav * cavCost + addArt * artCost;
+    updated = {
+      ...updated,
+      [id]: {
+        ...updated[id],
+        gold: updated[id].gold - goldSpent,
+        infantry: updated[id].infantry + addInf,
+        cavalry: updated[id].cavalry + addCav,
+        artillery: updated[id].artillery + addArt,
+      },
+    };
+  }
+  return updated;
+}
+
 function processMovements(input: {
   countries: Record<string, Country>;
   ownership: Record<string, string>;
@@ -278,7 +412,6 @@ function processMovements(input: {
     if (!destCountry) continue;
     const ownerOfDest = ownership[destId];
 
-    // Reinforcement: arriving in own territory.
     if (ownerOfDest === arrival.ownerId) {
       const ownerNation = nations[arrival.ownerId];
       if (ownerNation) {
@@ -378,8 +511,6 @@ function processMovements(input: {
         delete cleared[destId];
         contestedBy = cleared;
         conquered = true;
-        // The new owner integrates the survivors plus 30 % of any garrison
-        // the defender still had at this country (prisoners + integration).
         let absorbed: Composition = { ...survivors };
         if (defenderOwnerId) {
           const defNow = nations[defenderOwnerId];
@@ -400,7 +531,6 @@ function processMovements(input: {
             ),
           };
         }
-        // If the defender lost their last territory, retire their nation pool.
         if (defenderOwnerId) {
           const stillOwnsAnything = Object.values(ownership).some(
             (o) => o === defenderOwnerId,
@@ -432,7 +562,6 @@ function processMovements(input: {
         outcome = 'won';
       } else {
         if (refreshedAttacker) {
-          // 60 % of the survivors stagger home.
           const r = 0.6;
           const fallback: Composition = {
             infantry: Math.floor(survivors.infantry * r),
@@ -540,46 +669,8 @@ function applyAIAction(args: {
     case 'idle':
       return { nations, movements };
     case 'recruit': {
-      const cap = maxTroops(country);
-      const tot = totalTroops(self);
-      if (tot >= cap) return { nations, movements };
-      // AI buys a small batch in the personality's preferred mix.
-      const mix = action.mix ?? BALANCE_TROOPS.startingMix;
-      const want: Composition = {
-        infantry: 8 * mix.infantry,
-        cavalry: 8 * mix.cavalry,
-        artillery: 8 * mix.artillery,
-      };
-      let goldLeft = self.gold;
-      const additions: Composition = { infantry: 0, cavalry: 0, artillery: 0 };
-      for (const t of ['infantry', 'cavalry', 'artillery'] as const) {
-        const cost = recruitCost(t, country.specializations, self.unlockedTech);
-        const wantN = Math.max(0, Math.round(want[t]));
-        for (let i = 0; i < wantN; i++) {
-          if (totalTroops(self) + additions.infantry + additions.cavalry + additions.artillery >= cap) break;
-          if (goldLeft < cost) break;
-          additions[t] += 1;
-          goldLeft -= cost;
-        }
-      }
-      if (
-        additions.infantry +
-          additions.cavalry +
-          additions.artillery ===
-        0
-      ) {
-        return { nations, movements };
-      }
-      nations = {
-        ...nations,
-        [selfId]: {
-          ...self,
-          gold: goldLeft,
-          infantry: self.infantry + additions.infantry,
-          cavalry: self.cavalry + additions.cavalry,
-          artillery: self.artillery + additions.artillery,
-        },
-      };
+      // Auto-recruit cycle handles bulk growth; AI think-time recruitment
+      // is now redundant. Keep idle.
       return { nations, movements };
     }
     case 'invest_tech': {
@@ -603,11 +694,22 @@ function applyAIAction(args: {
       const available = tot - garrison;
       const send = Math.min(action.troops, available);
       if (send <= 0) return { nations, movements };
-      // Send proportional to current composition.
       const prop = available > 0 ? send / available : 0;
-      const sendInf = Math.floor((self.infantry - Math.floor(self.infantry * (garrison / Math.max(1, tot)))) * prop);
-      const sendCav = Math.floor((self.cavalry - Math.floor(self.cavalry * (garrison / Math.max(1, tot)))) * prop);
-      const sendArt = Math.floor((self.artillery - Math.floor(self.artillery * (garrison / Math.max(1, tot)))) * prop);
+      const sendInf = Math.floor(
+        (self.infantry -
+          Math.floor(self.infantry * (garrison / Math.max(1, tot)))) *
+          prop,
+      );
+      const sendCav = Math.floor(
+        (self.cavalry -
+          Math.floor(self.cavalry * (garrison / Math.max(1, tot)))) *
+          prop,
+      );
+      const sendArt = Math.floor(
+        (self.artillery -
+          Math.floor(self.artillery * (garrison / Math.max(1, tot)))) *
+          prop,
+      );
       const composition: Composition = {
         infantry: Math.max(0, sendInf),
         cavalry: Math.max(0, sendCav),
@@ -678,107 +780,23 @@ function applyAIAction(args: {
   }
 }
 
-function growPopulations(
-  populations: Record<string, number>,
-): Record<string, number> {
-  const next: Record<string, number> = {};
-  for (const [id, pop] of Object.entries(populations)) {
-    next[id] = Math.round(pop * (1 + BALANCE.populationGrowthPerTick));
-  }
-  return next;
-}
-
-/**
- * After income & upkeep, every nation with surplus gold automatically
- * recruits a small batch of troops. Player nations only auto-recruit if
- * they've unlocked the corresponding tech. Without this background growth
- * armies stagnate at low counts even after centuries.
- */
-function passiveRecruit(
-  countries: Record<string, Country>,
-  populations: Record<string, number>,
-  nations: Record<string, Nation>,
-  playerCountryId: string | null,
-  playerAutoRecruit: boolean,
-): Record<string, Nation> {
-  let updated = nations;
-  for (const [id, nation] of Object.entries(nations)) {
-    if (id === playerCountryId && !playerAutoRecruit) continue;
-    const country = countries[id];
-    if (!country) continue;
-    const pop = populations[id] ?? country.population;
-    const cap = Math.floor(pop * BALANCE.maxTroopsPerPopulation) *
-      (country.specializations.includes('martial') ? 1.25 : 1);
-    const total =
-      nation.infantry + nation.cavalry + nation.artillery;
-    if (total >= cap) continue;
-    const upkeepNow =
-      (nation.infantry + nation.cavalry * 1.4 + nation.artillery * 1.7) *
-      BALANCE.troopUpkeepRate;
-    const buffer = upkeepNow * BALANCE.maintenanceBufferTicks;
-    const surplus = nation.gold - buffer;
-    if (surplus <= 0) continue;
-    const spend = surplus * BALANCE.passiveRecruitFraction;
-
-    // Spend in the doctrine's mix (default 70/25/5 if no brain available).
-    const mix = { infantry: 0.7, cavalry: 0.25, artillery: 0.05 };
-    let goldLeft = spend;
-    let addInf = 0;
-    let addCav = 0;
-    let addArt = 0;
-    const infCost = country.specializations.includes('industrial') ? 8 : 8;
-    const cavCost = country.specializations.includes('horseBreeders') ? 13 : 18;
-    const artCost = country.specializations.includes('industrial') ? 22 : 32;
-
-    const tryBuy = (
-      cost: number,
-      portion: number,
-      adder: (n: number) => void,
-    ) => {
-      const budget = goldLeft * portion;
-      const n = Math.floor(budget / cost);
-      if (n <= 0) return;
-      const remaining = cap - (total + addInf + addCav + addArt);
-      const buy = Math.min(n, Math.max(0, remaining));
-      if (buy <= 0) return;
-      adder(buy);
-      goldLeft -= buy * cost;
-    };
-    tryBuy(infCost, mix.infantry, (n) => (addInf = n));
-    tryBuy(cavCost, mix.cavalry, (n) => (addCav = n));
-    tryBuy(artCost, mix.artillery, (n) => (addArt = n));
-
-    if (addInf + addCav + addArt === 0) continue;
-    const goldSpent = addInf * infCost + addCav * cavCost + addArt * artCost;
-    updated = {
-      ...updated,
-      [id]: {
-        ...updated[id],
-        gold: updated[id].gold - goldSpent,
-        infantry: updated[id].infantry + addInf,
-        cavalry: updated[id].cavalry + addCav,
-        artillery: updated[id].artillery + addArt,
-      },
-    };
-  }
-  return updated;
-}
-
 export function runTick(input: TickInput): TickOutput {
   const date = advanceDate(input.date);
   const now = performance.now();
 
-  // 0) Population growth
   const populations = growPopulations(input.populations);
 
   let nations = applyEconomy(input.countries, input.ownership, input.nations);
-  // 0.5) Passive recruit so armies scale with the world.
-  nations = passiveRecruit(
+
+  // Auto-recruit cycle (interval + threshold + randomized mix).
+  nations = autoRecruitCycle(
     input.countries,
     populations,
     nations,
+    input.brains,
+    input.tickCount,
     input.playerCountryId,
-    input.playerAutoRecruit,
+    input.rng,
   );
 
   const moveStep = processMovements({

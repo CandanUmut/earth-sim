@@ -13,6 +13,8 @@ export type TechNodeId =
   | 'eco_banking'
   | 'eco_treasury'
   | 'log_conscription' // unlocks auto-recruit
+  | 'log_garrison_reform' // faster + cheaper auto-recruit
+  | 'log_standing_army' // even faster + cheaper auto-recruit
   | 'log_naval'
   | 'dip_espionage'
   | 'dip_statecraft';
@@ -61,8 +63,27 @@ export const TECH_NODES: TechNode[] = [
     id: 'log_conscription',
     branch: 'logistics',
     name: 'Conscription Office',
-    description: 'Auto-recruit: surplus gold each tick is spent on troops.',
+    description:
+      'Unlocks auto-recruit: every 20 s, if treasury > 3000 g, a random portion is spent on troops.',
     cost: 300,
+  },
+  {
+    id: 'log_garrison_reform',
+    branch: 'logistics',
+    name: 'Garrison Reform',
+    description:
+      'Auto-recruit fires every 14 s, threshold drops to 2000 g, mix favors balance.',
+    cost: 500,
+    prereq: 'log_conscription',
+  },
+  {
+    id: 'log_standing_army',
+    branch: 'logistics',
+    name: 'Standing Army',
+    description:
+      'Auto-recruit fires every 9 s, threshold drops to 1200 g, full elite mix.',
+    cost: 800,
+    prereq: 'log_garrison_reform',
   },
   {
     id: 'log_naval',
@@ -135,6 +156,30 @@ export function recruitCostMultiplier(unlocked: TechNodeId[]): number {
 
 export function autoRecruitUnlocked(unlocked: TechNodeId[]): boolean {
   return unlocked.includes('log_conscription');
+}
+
+/** Tick interval between auto-recruit cycles. Lower = faster automation. */
+export function autoRecruitInterval(unlocked: TechNodeId[]): number {
+  if (unlocked.includes('log_standing_army')) return 9;
+  if (unlocked.includes('log_garrison_reform')) return 14;
+  return 20; // base Conscription Office
+}
+
+/** Treasury threshold below which auto-recruit holds off. */
+export function autoRecruitThreshold(unlocked: TechNodeId[]): number {
+  if (unlocked.includes('log_standing_army')) return 1200;
+  if (unlocked.includes('log_garrison_reform')) return 2000;
+  return 3000;
+}
+
+/**
+ * How much the random per-cycle mix can deviate from doctrine. Standing
+ * Army uses a tight, balanced mix; lower tiers swing more.
+ */
+export function autoRecruitMixVariance(unlocked: TechNodeId[]): number {
+  if (unlocked.includes('log_standing_army')) return 0.15;
+  if (unlocked.includes('log_garrison_reform')) return 0.25;
+  return 0.4;
 }
 
 export function navalCostUnit(unlocked: TechNodeId[]): number {

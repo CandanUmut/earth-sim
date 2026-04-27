@@ -5,6 +5,9 @@ import Header from './components/Header';
 import StartScreen from './components/StartScreen';
 import TimeControls from './components/TimeControls';
 import PlayerHUD from './components/PlayerHUD';
+import SendTroopsModal from './components/SendTroopsModal';
+import BattleLog from './components/BattleLog';
+import EndScreen from './components/EndScreen';
 import { useGameStore } from './store/gameStore';
 
 export default function App() {
@@ -22,7 +25,10 @@ export default function App() {
       <PlayerHUD />
       <CountryInfoPanel />
       <TimeControls />
+      <BattleLog />
+      <SendTroopsModal />
       <StartScreen />
+      <EndScreen />
       {error && (
         <div
           className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2"

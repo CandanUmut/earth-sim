@@ -3,6 +3,8 @@ import * as d3 from 'd3';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import { useGameStore } from '../store/gameStore';
 import { countryFill } from '../game/world';
+import MovementArrows from './MovementArrows';
+import BattleFlashes from './BattleFlashes';
 
 type Size = { w: number; h: number };
 
@@ -19,8 +21,30 @@ function useWindowSize(): Size {
   return size;
 }
 
+/** Blend a fill color with a stance tint. Returns the final color string. */
+function blendStance(
+  base: string,
+  stance: 'war' | 'neutral' | 'allied' | 'self' | null,
+): string {
+  if (!stance || stance === 'neutral') return base;
+  // base is hsl(h s% l%) — tweak via interpolation toward an accent.
+  const target =
+    stance === 'self'
+      ? '#d4a936' // gold-ish
+      : stance === 'war'
+        ? '#a13838'
+        : '#7d8e5f'; // sage-ish
+  // Use CSS color-mix where supported; modern Chromium does. Fallback = base.
+  return `color-mix(in srgb, ${base} 70%, ${target} 30%)`;
+}
+
 export default function WorldMap() {
   const geo = useGameStore((s) => s.geo);
+  const ownership = useGameStore((s) => s.ownership);
+  const nations = useGameStore((s) => s.nations);
+  const playerId = useGameStore((s) => s.playerCountryId);
+  const movements = useGameStore((s) => s.movements);
+  const countries = useGameStore((s) => s.countries);
   const setSelected = useGameStore((s) => s.setSelected);
   const setHovered = useGameStore((s) => s.setHovered);
   const selectedId = useGameStore((s) => s.selectedCountryId);
@@ -32,7 +56,6 @@ export default function WorldMap() {
 
   const { w, h } = useWindowSize();
 
-  // Build the projection + path generator once per geo + viewport.
   const pathD = useMemo(() => {
     if (!geo) return null;
     const projection = d3.geoMercator().fitSize([w, h], geo as FeatureCollection);
@@ -40,7 +63,7 @@ export default function WorldMap() {
     return { projection, path };
   }, [geo, w, h]);
 
-  // Set up zoom/pan once.
+  // Pan/zoom once.
   useEffect(() => {
     if (!svgRef.current || !gRef.current) return;
     const svg = d3.select(svgRef.current);
@@ -57,8 +80,23 @@ export default function WorldMap() {
     };
   }, []);
 
-  // Update strokes when selection / hover changes. We render paths via React,
-  // so D3 has no bound datum — read the id from each element's data-id attr.
+  // Update fills when ownership or player stance changes.
+  useEffect(() => {
+    if (!gRef.current) return;
+    const playerStance = playerId ? nations[playerId]?.stance ?? {} : {};
+    const paths = gRef.current.querySelectorAll<SVGPathElement>('path.country');
+    paths.forEach((el) => {
+      const id = el.dataset.id ?? '';
+      const owner = ownership[id] ?? id;
+      const base = countryFill(owner);
+      let stance: 'war' | 'neutral' | 'allied' | 'self' | null = null;
+      if (playerId && owner === playerId) stance = 'self';
+      else if (playerId && playerStance[owner]) stance = playerStance[owner];
+      el.setAttribute('fill', blendStance(base, stance));
+    });
+  }, [ownership, nations, playerId]);
+
+  // Update strokes when selection / hover changes.
   useEffect(() => {
     if (!gRef.current) return;
     const paths = gRef.current.querySelectorAll<SVGPathElement>('path.country');
@@ -92,6 +130,7 @@ export default function WorldMap() {
   const features = (geo as FeatureCollection).features as Array<
     Feature<Geometry, { id?: string }>
   >;
+  const playerStance = playerId ? nations[playerId]?.stance ?? null : null;
 
   return (
     <>
@@ -124,7 +163,10 @@ export default function WorldMap() {
                 strokeWidth={0.5}
                 strokeOpacity={0.55}
                 vectorEffect="non-scaling-stroke"
-                style={{ cursor: 'pointer', transition: 'fill 600ms ease' }}
+                style={{
+                  cursor: 'pointer',
+                  transition: 'fill 800ms ease, stroke-width 200ms ease',
+                }}
                 onMouseEnter={(e) => {
                   setHovered(id);
                   const props = (f.properties ?? {}) as Record<string, unknown>;
@@ -153,6 +195,14 @@ export default function WorldMap() {
               />
             );
           })}
+          <MovementArrows
+            projection={pathD.projection}
+            movements={movements}
+            countries={countries}
+            playerId={playerId}
+            playerStance={playerStance}
+          />
+          <BattleFlashes projection={pathD.projection} />
         </g>
         <rect
           width={w}

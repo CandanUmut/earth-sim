@@ -29,5 +29,36 @@ export const BALANCE = {
   // Tech investment
   techInvestmentCost: 100,
   techIncrement: 0.05,
-  techDiminishingExponent: 0.7, // returns scale by tech^-exp so growth slows
+  techDiminishingExponent: 0.7,
+} as const;
+
+export const BALANCE_MOVEMENT = {
+  /** Fraction of troops that must remain at home as garrison. */
+  homeGarrisonFraction: 0.1,
+} as const;
+
+export const BALANCE_AI = {
+  // Distribution must sum to 100.
+  personalityDistribution: {
+    aggressive: 25,
+    defensive: 25,
+    opportunist: 25,
+    isolationist: 15,
+    merchant: 10,
+  },
+  /** Min/max ticks between AI thoughts (chosen per nation). */
+  thinkCadenceMin: 3,
+  thinkCadenceMax: 8,
+  /** Attack threshold: target troops < this fraction of mine to be tempting. */
+  weakNeighborRatio: 0.6,
+  /** Fraction of own troops committed to an AI attack. */
+  attackCommitFraction: 0.7,
+  /** Defensive AI requires this much surplus gold to invest. */
+  surplusGoldForInvest: 200,
+  /** Aggressive AI alliance interest threshold. */
+  allianceAcceptStrengthRatio: 0.6,
+} as const;
+
+export const BALANCE_VICTORY = {
+  populationShareToWin: 0.6,
 } as const;

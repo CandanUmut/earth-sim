@@ -8,11 +8,35 @@ import {
   techIncrement,
   maxTroops,
   type Nation,
+  type Stance,
 } from '../game/economy';
-import { runTick, type GameDate } from '../game/tick';
-import { BALANCE } from '../game/balance';
+import {
+  runTick,
+  type GameDate,
+  type BattleLogEntry,
+} from '../game/tick';
+import {
+  newBrain,
+  evaluateAllianceProposal,
+  evaluatePeaceProposal,
+  type AIBrain,
+} from '../game/ai';
+import {
+  findPath,
+  newMovementId,
+  type TroopMovement,
+} from '../game/movement';
+import { type VictoryState } from '../game/victory';
+import { BALANCE, BALANCE_MOVEMENT } from '../game/balance';
 
 export type Speed = 1 | 2 | 3;
+
+export type FlashEvent = {
+  countryId: string;
+  /** Timestamp ms — rendering fades over ~1.5 s. */
+  startedAt: number;
+  kind: 'battle' | 'reinforce';
+};
 
 export type GameState = {
   // World data
@@ -26,17 +50,26 @@ export type GameState = {
   // Live state
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
+  brains: Record<string, AIBrain>;
+  movements: TroopMovement[];
+  battleLog: BattleLogEntry[];
+  flashes: FlashEvent[];
   date: GameDate;
+  tickCount: number;
 
   // Player & controls
   playerCountryId: string | null;
+  homeCountryId: string | null;
   paused: boolean;
   speed: Speed;
   gameStarted: boolean;
+  victory: VictoryState;
 
-  // UI
+  // UI state
   selectedCountryId: string | null;
   hoveredCountryId: string | null;
+  battleLogOpen: boolean;
+  dispatchTargetId: string | null;
 
   // Actions
   loadInitialWorld: () => Promise<void>;
@@ -49,41 +82,80 @@ export type GameState = {
   recruitTroops: (amount: number) => void;
   investInTech: () => void;
   tick: () => void;
+  // Player military
+  openDispatch: (toId: string) => void;
+  closeDispatch: () => void;
+  dispatchTroops: (toId: string, troops: number) => void;
+  // Diplomacy
+  declareWar: (targetId: string) => void;
+  proposePeace: (targetId: string) => void;
+  proposeAlliance: (targetId: string) => void;
+  sendGift: (targetId: string, gold: number) => void;
+  // UI
+  toggleBattleLog: () => void;
+  dismissEndScreen: () => void;
+  newCampaign: () => void;
+  pruneFlashes: () => void;
 };
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
-
 function clearTickInterval() {
   if (tickIntervalId !== null) {
     clearInterval(tickIntervalId);
     tickIntervalId = null;
   }
 }
-
 function ensureTickInterval(get: () => GameState) {
   clearTickInterval();
-  const { paused, speed, gameStarted, tick } = get();
-  if (paused || !gameStarted) return;
-  const ms = BALANCE.msPerTickAt1x / speed;
+  const { paused, gameStarted, victory, tick } = get();
+  if (paused || !gameStarted || victory.kind !== 'ongoing') return;
+  const ms = BALANCE.msPerTickAt1x / get().speed;
   tickIntervalId = setInterval(tick, ms);
 }
 
-export const useGameStore = create<GameState>((set, get) => ({
+function setMutualStance(
+  nations: Record<string, Nation>,
+  a: string,
+  b: string,
+  stance: Stance,
+): Record<string, Nation> {
+  const next = { ...nations };
+  const na = next[a];
+  const nb = next[b];
+  if (na) next[a] = { ...na, stance: { ...na.stance, [b]: stance } };
+  if (nb) next[b] = { ...nb, stance: { ...nb.stance, [a]: stance } };
+  return next;
+}
+
+const initialState = {
   loaded: false,
   loading: false,
-  error: null,
-  countries: {},
-  countryOrder: [],
-  geo: null,
-  ownership: {},
-  nations: {},
-  date: { year: 1900, month: 0 },
-  playerCountryId: null,
+  error: null as string | null,
+  countries: {} as Record<string, Country>,
+  countryOrder: [] as string[],
+  geo: null as FeatureCollection | null,
+  ownership: {} as Record<string, string>,
+  nations: {} as Record<string, Nation>,
+  brains: {} as Record<string, AIBrain>,
+  movements: [] as TroopMovement[],
+  battleLog: [] as BattleLogEntry[],
+  flashes: [] as FlashEvent[],
+  date: { year: 1900, month: 0 } as GameDate,
+  tickCount: 0,
+  playerCountryId: null as string | null,
+  homeCountryId: null as string | null,
   paused: true,
-  speed: 1,
+  speed: 1 as Speed,
   gameStarted: false,
-  selectedCountryId: null,
-  hoveredCountryId: null,
+  victory: { kind: 'ongoing' as const } as VictoryState,
+  selectedCountryId: null as string | null,
+  hoveredCountryId: null as string | null,
+  battleLogOpen: false,
+  dispatchTargetId: null as string | null,
+};
+
+export const useGameStore = create<GameState>((set, get) => ({
+  ...initialState,
 
   loadInitialWorld: async () => {
     if (get().loaded || get().loading) return;
@@ -93,11 +165,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       const byId: Record<string, Country> = {};
       const ownership: Record<string, string> = {};
       const nations: Record<string, Nation> = {};
+      const brains: Record<string, AIBrain> = {};
       const order: string[] = [];
       for (const c of countries) {
         byId[c.id] = c;
         ownership[c.id] = c.id;
         nations[c.id] = makeStartingNation(c);
+        brains[c.id] = newBrain();
         order.push(c.id);
       }
       set({
@@ -105,6 +179,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         countryOrder: order,
         ownership,
         nations,
+        brains,
         geo,
         loaded: true,
         loading: false,
@@ -135,6 +210,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     };
     set({
       playerCountryId: playerId,
+      homeCountryId: playerId,
       nations: { ...nations, [playerId]: buffed },
       gameStarted: true,
       paused: false,
@@ -147,12 +223,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({ paused });
     ensureTickInterval(get);
   },
-
   togglePaused: () => {
     set({ paused: !get().paused });
     ensureTickInterval(get);
   },
-
   setSpeed: (speed) => {
     set({ speed });
     ensureTickInterval(get);
@@ -164,13 +238,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     const nation = nations[playerCountryId];
     const country = countries[playerCountryId];
     if (!nation || !country) return;
-
-    const cost = amount * recruitCost();
-    if (nation.gold < cost) return;
     const cap = maxTroops(country);
     const allowed = Math.min(amount, cap - nation.troops);
     if (allowed <= 0) return;
     const realCost = allowed * recruitCost();
+    if (nation.gold < realCost) return;
     set({
       nations: {
         ...nations,
@@ -203,13 +275,202 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   tick: () => {
-    const { date, countries, ownership, nations } = get();
-    const result = runTick({ date, countries, ownership, nations });
-    set({ date: result.date, nations: result.nations });
+    const s = get();
+    const result = runTick({
+      date: s.date,
+      tickCount: s.tickCount + 1,
+      countries: s.countries,
+      ownership: s.ownership,
+      nations: s.nations,
+      brains: s.brains,
+      movements: s.movements,
+      playerCountryId: s.playerCountryId,
+      homeCountryId: s.homeCountryId,
+      rng: Math.random,
+    });
+
+    const now = performance.now();
+    const newFlashes: FlashEvent[] = result.flashedCountryIds.map((cid) => ({
+      countryId: cid,
+      startedAt: now,
+      kind: 'battle',
+    }));
+    // Drop stale flashes (>1500 ms).
+    const flashes = [...s.flashes, ...newFlashes].filter(
+      (f) => now - f.startedAt < 1500,
+    );
+
+    const battleLog = [...result.newBattles, ...s.battleLog].slice(0, 20);
+
+    set({
+      date: result.date,
+      tickCount: s.tickCount + 1,
+      ownership: result.ownership,
+      nations: result.nations,
+      brains: result.brains,
+      movements: result.movements,
+      battleLog,
+      flashes,
+      victory: result.victory,
+    });
+
+    if (result.victory.kind !== 'ongoing') {
+      clearTickInterval();
+    }
+  },
+
+  openDispatch: (toId) => set({ dispatchTargetId: toId }),
+  closeDispatch: () => set({ dispatchTargetId: null }),
+
+  dispatchTroops: (toId, troops) => {
+    const {
+      playerCountryId,
+      countries,
+      nations,
+      ownership,
+      movements,
+      tickCount,
+    } = get();
+    if (!playerCountryId) return;
+    const player = nations[playerCountryId];
+    if (!player) return;
+    // Find best origin: any of MY territories that can reach the target.
+    const myIds = Object.entries(ownership)
+      .filter(([, owner]) => owner === playerCountryId)
+      .map(([tid]) => tid);
+    let bestPath: string[] | null = null;
+    let bestFromId: string | null = null;
+    for (const myId of myIds) {
+      const p = findPath(countries, myId, toId);
+      if (p && (!bestPath || p.length < bestPath.length)) {
+        bestPath = p;
+        bestFromId = myId;
+      }
+    }
+    if (!bestPath || !bestFromId) return;
+    const garrison = Math.floor(
+      player.troops * BALANCE_MOVEMENT.homeGarrisonFraction,
+    );
+    const available = player.troops - garrison;
+    const send = Math.min(troops, Math.max(0, available));
+    if (send <= 0) return;
+    const newMv: TroopMovement = {
+      id: newMovementId(),
+      ownerId: playerCountryId,
+      fromId: bestFromId,
+      toId,
+      troops: send,
+      path: bestPath,
+      pathIndex: 0,
+      launchTick: tickCount,
+    };
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: { ...player, troops: player.troops - send },
+      },
+      movements: [...movements, newMv],
+      dispatchTargetId: null,
+    });
+  },
+
+  declareWar: (targetId) => {
+    const { playerCountryId, nations } = get();
+    if (!playerCountryId || playerCountryId === targetId) return;
+    set({ nations: setMutualStance(nations, playerCountryId, targetId, 'war') });
+  },
+
+  proposePeace: (targetId) => {
+    const { playerCountryId, nations, brains } = get();
+    if (!playerCountryId || playerCountryId === targetId) return;
+    const targetBrain = brains[targetId];
+    if (!targetBrain) return;
+    const accepted = evaluatePeaceProposal({
+      proposerId: playerCountryId,
+      targetId,
+      nations,
+      brain: targetBrain,
+    });
+    if (accepted) {
+      set({
+        nations: setMutualStance(nations, playerCountryId, targetId, 'neutral'),
+      });
+    }
+  },
+
+  proposeAlliance: (targetId) => {
+    const { playerCountryId, nations, brains } = get();
+    if (!playerCountryId || playerCountryId === targetId) return;
+    const targetBrain = brains[targetId];
+    if (!targetBrain) return;
+    const accepted = evaluateAllianceProposal({
+      proposerId: playerCountryId,
+      targetId,
+      nations,
+      brain: targetBrain,
+    });
+    if (accepted) {
+      set({
+        nations: setMutualStance(nations, playerCountryId, targetId, 'allied'),
+      });
+    }
+  },
+
+  sendGift: (targetId, gold) => {
+    const { playerCountryId, nations } = get();
+    if (!playerCountryId) return;
+    const player = nations[playerCountryId];
+    const target = nations[targetId];
+    if (!player || !target) return;
+    if (player.gold < gold) return;
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: { ...player, gold: player.gold - gold },
+        [targetId]: { ...target, gold: target.gold + gold },
+      },
+    });
+  },
+
+  toggleBattleLog: () => set({ battleLogOpen: !get().battleLogOpen }),
+
+  dismissEndScreen: () => {
+    set({ victory: { kind: 'ongoing' } });
+  },
+
+  newCampaign: () => {
+    clearTickInterval();
+    const { countries, countryOrder, geo } = get();
+    const ownership: Record<string, string> = {};
+    const nations: Record<string, Nation> = {};
+    const brains: Record<string, AIBrain> = {};
+    for (const id of countryOrder) {
+      const c = countries[id];
+      if (!c) continue;
+      ownership[id] = id;
+      nations[id] = makeStartingNation(c);
+      brains[id] = newBrain();
+    }
+    set({
+      ...initialState,
+      countries,
+      countryOrder,
+      geo,
+      ownership,
+      nations,
+      brains,
+      loaded: true,
+    });
+  },
+
+  pruneFlashes: () => {
+    const now = performance.now();
+    set({
+      flashes: get().flashes.filter((f) => now - f.startedAt < 1500),
+    });
   },
 }));
 
-// Stop the tick on hot-reload to avoid duplicates.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => clearTickInterval());
 }

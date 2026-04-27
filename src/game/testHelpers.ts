@@ -17,6 +17,7 @@ export function makeCountry(
     name: over.name ?? over.id,
     centroid: over.centroid ?? [0, 0],
     neighbors: over.neighbors ?? [],
+    navalNeighbors: over.navalNeighbors ?? [],
     population: over.population ?? 1_000_000,
     baseEconomy: over.baseEconomy ?? 5,
     terrain: over.terrain ?? ('plains' as Terrain),

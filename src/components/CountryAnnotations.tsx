@@ -1,5 +1,8 @@
 import { useMemo } from 'react';
+import polylabel from 'polylabel';
+import * as d3 from 'd3';
 import type { GeoProjection } from 'd3';
+import type { Feature, FeatureCollection, Geometry, Position } from 'geojson';
 import { useGameStore } from '../store/gameStore';
 import { BALANCE_CONTROL } from '../game/balance';
 import { totalTroops } from '../game/economy';
@@ -15,20 +18,6 @@ function fmtTroops(n: number): string {
   return Math.round(n).toString();
 }
 
-/**
- * Label font sizing. Geo area is in steradians; sqrt to get a linear scale,
- * then bucket into 3 sizes. Label still scales with map zoom (it lives
- * inside the transformed group), but the base size matters at default zoom.
- */
-function labelFontSize(geoArea: number): number {
-  const r = Math.sqrt(Math.max(0.0001, geoArea));
-  if (r > 0.25) return 14; // continent-scale: Russia, China, USA, Brazil, Canada
-  if (r > 0.10) return 10;
-  if (r > 0.04) return 7;
-  if (r > 0.01) return 5;
-  return 4; // micro — only really legible when zoomed in
-}
-
 function badgeColor(args: {
   ownerId: string;
   playerId: string | null;
@@ -41,128 +30,211 @@ function badgeColor(args: {
   return 'var(--ink-faded)';
 }
 
+type LabelLayout = {
+  x: number;
+  y: number;
+  /** Width of polygon's bounding box in pixels. */
+  pxWidth: number;
+  pxHeight: number;
+  fontSize: number;
+};
+
+/**
+ * Compute the pole-of-inaccessibility (deepest point inside the polygon) for
+ * each country. For MultiPolygons, use the largest polygon by projected
+ * area. Label font is scaled to fit the polygon width.
+ */
+function computeLabelLayouts(
+  features: Array<Feature<Geometry, Record<string, unknown>>>,
+  projection: GeoProjection,
+): Map<string, LabelLayout> {
+  const path = d3.geoPath(projection);
+  const out = new Map<string, LabelLayout>();
+
+  const projectRing = (ring: Position[]): number[][] => {
+    const projected: number[][] = [];
+    for (const c of ring) {
+      const p = projection(c as [number, number]);
+      if (p && Number.isFinite(p[0]) && Number.isFinite(p[1])) {
+        projected.push(p);
+      }
+    }
+    return projected;
+  };
+
+  const ringArea = (ring: number[][]): number => {
+    let sum = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      sum += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+    }
+    return Math.abs(sum * 0.5);
+  };
+
+  for (const feature of features) {
+    const id = (feature as { id?: string }).id ?? '';
+    if (!id) continue;
+    const props = (feature.properties ?? {}) as Record<string, unknown>;
+    const name = (props.ADMIN as string) || (props.NAME as string) || id;
+    const geom = feature.geometry;
+
+    let bestRing: number[][] | null = null;
+    let bestArea = 0;
+
+    if (geom.type === 'Polygon') {
+      const ring = projectRing(geom.coordinates[0]);
+      if (ring.length >= 3) {
+        bestRing = ring;
+        bestArea = ringArea(ring);
+      }
+    } else if (geom.type === 'MultiPolygon') {
+      for (const poly of geom.coordinates) {
+        const ring = projectRing(poly[0]);
+        if (ring.length < 3) continue;
+        const a = ringArea(ring);
+        if (a > bestArea) {
+          bestArea = a;
+          bestRing = ring;
+        }
+      }
+    }
+
+    if (!bestRing) continue;
+
+    let labelPoint: number[];
+    try {
+      labelPoint = polylabel([bestRing], 1.0);
+    } catch {
+      labelPoint = bestRing[0];
+    }
+
+    const bounds = path.bounds(feature);
+    const pxWidth = bounds[1][0] - bounds[0][0];
+    const pxHeight = bounds[1][1] - bounds[0][1];
+    // Font size that fits horizontally; clamp so very large countries don't
+    // get gigantic labels.
+    const charWidthFactor = 0.55;
+    const targetByWidth = pxWidth / Math.max(name.length, 4) / charWidthFactor;
+    const fontSize = Math.max(2.2, Math.min(12, targetByWidth, pxHeight / 3));
+
+    out.set(id, {
+      x: labelPoint[0],
+      y: labelPoint[1],
+      pxWidth,
+      pxHeight,
+      fontSize,
+    });
+  }
+  return out;
+}
+
 export default function CountryAnnotations({ projection }: Props) {
   const countries = useGameStore((s) => s.countries);
   const countryOrder = useGameStore((s) => s.countryOrder);
   const ownership = useGameStore((s) => s.ownership);
   const nations = useGameStore((s) => s.nations);
   const control = useGameStore((s) => s.control);
+  const geo = useGameStore((s) => s.geo);
   const playerId = useGameStore((s) => s.playerCountryId);
   const playerStance = useGameStore((s) =>
     s.playerCountryId ? (s.nations[s.playerCountryId]?.stance ?? null) : null,
   );
 
-  // Project all centroids once per render.
-  const projected = useMemo(() => {
-    const out: Record<string, [number, number]> = {};
-    for (const id of countryOrder) {
-      const c = countries[id];
-      if (!c) continue;
-      const p = projection(c.centroid);
-      if (p) out[id] = p;
-    }
-    return out;
-  }, [countries, countryOrder, projection]);
+  const layouts = useMemo(() => {
+    if (!geo) return new Map<string, LabelLayout>();
+    const features = (geo as FeatureCollection).features as Array<
+      Feature<Geometry, Record<string, unknown>>
+    >;
+    return computeLabelLayouts(features, projection);
+  }, [geo, projection]);
 
   return (
     <g pointerEvents="none">
       {countryOrder.map((id) => {
         const country = countries[id];
-        const p = projected[id];
-        if (!country || !p) return null;
+        const layout = layouts.get(id);
+        if (!country || !layout) return null;
         const owner = ownership[id] ?? id;
+        const isCapital = owner === id;
         const ownerNation = nations[owner];
-        const troops = ownerNation ? totalTroops(ownerNation) : 0;
+        const totalAtCapital = ownerNation ? totalTroops(ownerNation) : 0;
         const ctrl = control[id] ?? BALANCE_CONTROL.fullControl;
         const contested = ctrl < BALANCE_CONTROL.fullControl - 1;
-        const fontSize = labelFontSize(country.geoArea);
+        const fontSize = layout.fontSize;
         const color = badgeColor({
           ownerId: owner,
           playerId,
           playerStance,
         });
+        // Only show troop badge on capitals with troops, AND only if there's
+        // visual room (avoids splatting numbers across micro-states).
+        const showBadge =
+          isCapital && totalAtCapital > 0 && layout.pxWidth >= 22;
 
         return (
-          <g key={id} transform={`translate(${p[0]} ${p[1]})`}>
-            {/* Country label — paper outline ensures legibility across fills. */}
+          <g key={id} transform={`translate(${layout.x} ${layout.y})`}>
+            {/* Country label (paint-order stroke for legibility on any fill) */}
             <text
               x={0}
-              y={-fontSize - 1}
+              y={0}
               textAnchor="middle"
               fontFamily='"Crimson Pro", serif'
               fontStyle="italic"
               fontWeight={600}
               fontSize={fontSize}
               stroke="var(--paper)"
-              strokeWidth={Math.max(1.6, fontSize / 4)}
+              strokeWidth={Math.max(1.4, fontSize / 4)}
               strokeLinejoin="round"
-              fill="none"
-              paintOrder="stroke"
-              style={{ pointerEvents: 'none' }}
-              vectorEffect="non-scaling-stroke"
-            >
-              {country.name}
-            </text>
-            <text
-              x={0}
-              y={-fontSize - 1}
-              textAnchor="middle"
-              fontFamily='"Crimson Pro", serif'
-              fontStyle="italic"
-              fontWeight={600}
-              fontSize={fontSize}
               fill="var(--ink)"
+              paintOrder="stroke"
               style={{ pointerEvents: 'none' }}
             >
               {country.name}
             </text>
 
-            {/* Troop count */}
-            {troops > 0 && (
-              <g>
+            {showBadge && (
+              <g transform={`translate(0 ${fontSize + 1})`}>
                 <rect
-                  x={-Math.max(10, fmtTroops(troops).length * 2.2)}
-                  y={2}
-                  width={Math.max(20, fmtTroops(troops).length * 4.4)}
-                  height={7}
-                  rx={1.5}
+                  x={-Math.max(8, fmtTroops(totalAtCapital).length * 1.6)}
+                  y={0}
+                  width={Math.max(16, fmtTroops(totalAtCapital).length * 3.2)}
+                  height={5}
+                  rx={1}
                   fill="var(--paper)"
                   stroke={color}
-                  strokeWidth={0.5}
+                  strokeWidth={0.4}
                   vectorEffect="non-scaling-stroke"
                 />
                 <text
                   x={0}
-                  y={7.4}
+                  y={4}
                   textAnchor="middle"
                   fontFamily='"JetBrains Mono", monospace'
                   fontWeight={600}
-                  fontSize={5}
+                  fontSize={3.6}
                   fill={color}
                 >
-                  {fmtTroops(troops)}
+                  {fmtTroops(totalAtCapital)}
                 </text>
               </g>
             )}
 
-            {/* Control bar — only when contested */}
-            {contested && (
-              <g>
+            {contested && layout.pxWidth >= 18 && (
+              <g transform={`translate(0 ${fontSize + (showBadge ? 8 : 2)})`}>
                 <rect
-                  x={-12}
-                  y={11}
-                  width={24}
-                  height={2}
+                  x={-8}
+                  y={0}
+                  width={16}
+                  height={1.2}
                   fill="var(--paper)"
                   stroke="var(--accent-blood)"
-                  strokeWidth={0.4}
+                  strokeWidth={0.3}
                   vectorEffect="non-scaling-stroke"
                 />
                 <rect
-                  x={-12}
-                  y={11}
-                  width={(24 * ctrl) / BALANCE_CONTROL.fullControl}
-                  height={2}
+                  x={-8}
+                  y={0}
+                  width={(16 * ctrl) / BALANCE_CONTROL.fullControl}
+                  height={1.2}
                   fill="var(--accent-blood)"
                 />
               </g>

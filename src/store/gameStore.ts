@@ -39,8 +39,25 @@ import {
   summarizeSave,
   type SaveSummary,
 } from './persistence';
+import { play as playSound } from '../sound/sound';
 
 export type Speed = 1 | 2 | 3;
+
+export type BattleAnimation = {
+  id: string;
+  attackerOwnerId: string;
+  defenderOwnerId: string;
+  countryId: string;
+  attackerTroopsBefore: number;
+  defenderTroopsBefore: number;
+  totalAttackerLosses: number;
+  totalDefenderLosses: number;
+  attackerWon: boolean;
+  conquered: boolean;
+  startedAt: number;
+};
+
+export const BATTLE_ANIM_MS = 2500;
 
 export type GameState = {
   loaded: boolean;
@@ -58,6 +75,7 @@ export type GameState = {
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   battleLog: BattleLogEntry[];
+  battleAnimations: BattleAnimation[];
   arrivalTrails: ArrivalEvent[];
   date: GameDate;
   tickCount: number;
@@ -144,6 +162,7 @@ const initialState = {
   lastBattleTick: {} as Record<string, number>,
   movements: [] as TroopMovement[],
   battleLog: [] as BattleLogEntry[],
+  battleAnimations: [] as BattleAnimation[],
   arrivalTrails: [] as ArrivalEvent[],
   date: { year: 1900, month: 0 } as GameDate,
   tickCount: 0,
@@ -202,7 +221,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
 
-  setSelected: (id) => set({ selectedCountryId: id }),
+  setSelected: (id) => {
+    if (id !== null && id !== get().selectedCountryId) playSound('click');
+    set({ selectedCountryId: id });
+  },
   setHovered: (id) => set({ hoveredCountryId: id }),
 
   startCampaign: (playerId) => {
@@ -316,6 +338,23 @@ export const useGameStore = create<GameState>((set, get) => ({
       ...result.newArrivals,
     ].filter((t) => now - t.arrivedAt < BALANCE_MOVEMENT.arrivalTrailMs);
 
+    const newAnimations: BattleAnimation[] = result.newBattles.map((b) => ({
+      id: b.id,
+      attackerOwnerId: b.attackerOwnerId,
+      defenderOwnerId: b.defenderOwnerId,
+      countryId: b.countryId,
+      attackerTroopsBefore: b.attackerTroopsBefore,
+      defenderTroopsBefore: b.defenderTroopsBefore,
+      totalAttackerLosses: b.totalAttackerLosses,
+      totalDefenderLosses: b.totalDefenderLosses,
+      attackerWon: b.attackerWon,
+      conquered: b.conquered,
+      startedAt: now,
+    }));
+    const battleAnimations = [...s.battleAnimations, ...newAnimations].filter(
+      (a) => now - a.startedAt < BATTLE_ANIM_MS,
+    );
+
     const battleLog = [...result.newBattles, ...s.battleLog].slice(0, 30);
 
     set({
@@ -329,14 +368,24 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastBattleTick: result.lastBattleTick,
       movements: result.movements,
       battleLog,
+      battleAnimations,
       arrivalTrails: trails,
       victory: result.victory,
     });
+
+    // Sound cues for the new battles + outcome.
+    if (result.newBattles.length > 0) {
+      const conquest = result.newBattles.some((b) => b.conquered);
+      if (conquest) playSound('conquest');
+      else playSound('cannon');
+    }
 
     if (result.victory.kind !== 'ongoing') {
       clearTickInterval();
       clearSave();
       set({ savedSummary: null });
+      if (result.victory.kind === 'win') playSound('conquest');
+      else playSound('defeat');
     } else if ((s.tickCount + 1) % 10 === 0) {
       const now2 = get();
       writeSave({
@@ -440,6 +489,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       movements: [...movements, newMv],
       dispatchTargetId: null,
     });
+    playSound('march');
   },
 
   declareWar: (targetId) => {
@@ -481,6 +531,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       set({
         nations: setMutualStance(nations, playerCountryId, targetId, 'allied'),
       });
+      playSound('alliance');
     }
   },
 
@@ -541,6 +592,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({
       arrivalTrails: get().arrivalTrails.filter(
         (t) => now - t.arrivedAt < BALANCE_MOVEMENT.arrivalTrailMs,
+      ),
+      battleAnimations: get().battleAnimations.filter(
+        (a) => now - a.startedAt < BATTLE_ANIM_MS,
       ),
     });
   },

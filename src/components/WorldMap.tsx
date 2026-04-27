@@ -5,6 +5,7 @@ import { useGameStore } from '../store/gameStore';
 import { countryFill } from '../game/world';
 import MovementArrows from './MovementArrows';
 import BattleFlashes from './BattleFlashes';
+import BattleAnimations from './BattleAnimations';
 import CountryAnnotations from './CountryAnnotations';
 
 type Size = { w: number; h: number };
@@ -309,6 +310,7 @@ export default function WorldMap() {
             playerStance={playerStance}
           />
           <BattleFlashes projection={pathD.projection} />
+          <BattleAnimations projection={pathD.projection} />
           <CountryAnnotations projection={pathD.projection} />
         </g>
         <rect

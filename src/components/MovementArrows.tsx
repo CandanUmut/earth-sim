@@ -1,6 +1,7 @@
 import type { GeoProjection } from 'd3';
 import type { Country } from '../game/world';
 import type { TroopMovement } from '../game/movement';
+import { isNavalLeg } from '../game/movement';
 import type { ArrivalEvent } from '../game/tick';
 
 type Props = {
@@ -165,6 +166,17 @@ export default function MovementArrows({
 
         const { path, mid } = buildArrowPath(a, b, mv.id);
         const markerId = markerIdFor(color);
+
+        // Naval if any remaining hop crosses water.
+        let goesByWater = false;
+        for (let i = mv.pathIndex; i < mv.path.length - 1; i++) {
+          if (isNavalLeg(countries, mv.path[i], mv.path[i + 1])) {
+            goesByWater = true;
+            break;
+          }
+        }
+        const dashArray = goesByWater ? '2 3' : '6 4';
+
         return (
           <g key={mv.id}>
             <path
@@ -173,7 +185,7 @@ export default function MovementArrows({
               strokeWidth={1.6}
               fill="none"
               strokeOpacity={0.92}
-              strokeDasharray="6 4"
+              strokeDasharray={dashArray}
               vectorEffect="non-scaling-stroke"
               markerEnd={`url(#${markerId})`}
               style={{ animation: 'march 1.2s linear infinite' }}

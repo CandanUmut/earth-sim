@@ -1,4 +1,4 @@
-import { geoCentroid, geoArea } from 'd3';
+import { geoCentroid, geoArea, geoDistance } from 'd3';
 import type { Feature, FeatureCollection, Geometry, Position } from 'geojson';
 
 export type Terrain = 'plains' | 'mountain' | 'island' | 'desert' | 'forest';
@@ -33,7 +33,10 @@ export type Country = {
   id: string;
   name: string;
   centroid: [number, number];
+  /** Land-adjacent neighbors (shared border). */
   neighbors: string[];
+  /** Cross-water neighbors within naval reach. Disjoint from `neighbors`. */
+  navalNeighbors: string[];
   population: number;
   baseEconomy: number;
   terrain: Terrain;
@@ -195,7 +198,7 @@ export async function loadWorld(): Promise<WorldData> {
   const features = geo.features as CountryFeature[];
   const adj = computeNeighbors(features);
 
-  const countries: Country[] = features.map((feature) => {
+  const baseCountries = features.map((feature) => {
     const id = featureId(feature);
     const centroid = geoCentroid(feature) as [number, number];
     const terrain = inferTerrain(feature, centroid);
@@ -212,6 +215,12 @@ export async function loadWorld(): Promise<WorldData> {
     };
   });
 
+  const navalNeighbors = computeNavalNeighbors(baseCountries);
+  const countries: Country[] = baseCountries.map((c) => ({
+    ...c,
+    navalNeighbors: navalNeighbors[c.id] ?? [],
+  }));
+
   // Stash id back onto each feature for fast path lookup at render time.
   features.forEach((f) => {
     (f as { id?: string }).id = featureId(f);
@@ -219,6 +228,36 @@ export async function loadWorld(): Promise<WorldData> {
 
   cachedWorld = { countries, geo };
   return cachedWorld;
+}
+
+/**
+ * For each country, find up to 3 nearest non-land-neighbor countries within
+ * a great-circle distance threshold. These are the routes ships can take.
+ * 0.6 radians ≈ 3800 km — wide enough that Antarctica reaches the southern
+ * tip of South America and that island nations have meaningful targets.
+ */
+function computeNavalNeighbors(
+  countries: Array<{
+    id: string;
+    centroid: [number, number];
+    neighbors: string[];
+  }>,
+): Record<string, string[]> {
+  const NAVAL_MAX_RAD = 0.6;
+  const out: Record<string, string[]> = {};
+  for (const a of countries) {
+    const candidates: Array<{ id: string; d: number }> = [];
+    for (const b of countries) {
+      if (a.id === b.id) continue;
+      if (a.neighbors.includes(b.id)) continue;
+      const d = geoDistance(a.centroid, b.centroid);
+      if (d > NAVAL_MAX_RAD) continue;
+      candidates.push({ id: b.id, d });
+    }
+    candidates.sort((x, y) => x.d - y.d);
+    out[a.id] = candidates.slice(0, 3).map((c) => c.id);
+  }
+  return out;
 }
 
 /**

@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
-import { Pause, Play } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Pause, Play, Volume2, VolumeX } from 'lucide-react';
 import { useGameStore, type Speed } from '../store/gameStore';
 import { formatDate } from '../game/tick';
+import { isMuted, setMuted } from '../sound/sound';
 
 export default function TimeControls() {
   const paused = useGameStore((s) => s.paused);
@@ -10,6 +11,7 @@ export default function TimeControls() {
   const gameStarted = useGameStore((s) => s.gameStarted);
   const togglePaused = useGameStore((s) => s.togglePaused);
   const setSpeed = useGameStore((s) => s.setSpeed);
+  const [muted, setMutedLocal] = useState(() => isMuted());
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -109,6 +111,38 @@ export default function TimeControls() {
       >
         {formatDate(date)}
       </div>
+
+      <div
+        style={{
+          width: 1,
+          height: 22,
+          background: 'var(--ink-faded)',
+          opacity: 0.5,
+        }}
+      />
+
+      <button
+        type="button"
+        onClick={() => {
+          const next = !muted;
+          setMuted(next);
+          setMutedLocal(next);
+        }}
+        aria-label={muted ? 'Unmute' : 'Mute'}
+        title={muted ? 'Unmute' : 'Mute'}
+        style={{
+          width: 32,
+          height: 32,
+          display: 'grid',
+          placeItems: 'center',
+          background: 'transparent',
+          color: 'var(--ink)',
+          border: '1px solid var(--ink)',
+          cursor: 'pointer',
+        }}
+      >
+        {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+      </button>
     </div>
   );
 }

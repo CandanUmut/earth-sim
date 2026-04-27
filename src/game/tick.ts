@@ -67,6 +67,9 @@ export type BattleLogEntry = {
   defenderLosses: LossesByType;
   totalAttackerLosses: number;
   totalDefenderLosses: number;
+  /** Total troops on each side as the battle began. Used to size animations. */
+  attackerTroopsBefore: number;
+  defenderTroopsBefore: number;
   attackerWon: boolean;
   conquered: boolean;
   controlAfter: number;
@@ -361,14 +364,48 @@ function processMovements(input: {
         delete cleared[destId];
         contestedBy = cleared;
         conquered = true;
+        // The new owner integrates the survivors plus 30 % of any garrison
+        // the defender still had at this country (prisoners + integration).
+        let absorbed: Composition = { ...survivors };
+        if (defenderOwnerId) {
+          const defNow = nations[defenderOwnerId];
+          if (defNow) {
+            absorbed = {
+              infantry: absorbed.infantry + Math.floor(defNow.infantry * 0.3),
+              cavalry: absorbed.cavalry + Math.floor(defNow.cavalry * 0.3),
+              artillery: absorbed.artillery + Math.floor(defNow.artillery * 0.3),
+            };
+          }
+        }
         if (refreshedAttacker) {
           nations = {
             ...nations,
             [arrival.ownerId]: addCompositionsToNation(
               refreshedAttacker,
-              survivors,
+              absorbed,
             ),
           };
+        }
+        // If the defender lost their last territory, retire their nation pool.
+        if (defenderOwnerId) {
+          const stillOwnsAnything = Object.values(ownership).some(
+            (o) => o === defenderOwnerId,
+          );
+          if (!stillOwnsAnything) {
+            const def = nations[defenderOwnerId];
+            if (def) {
+              nations = {
+                ...nations,
+                [defenderOwnerId]: {
+                  ...def,
+                  gold: 0,
+                  infantry: 0,
+                  cavalry: 0,
+                  artillery: 0,
+                },
+              };
+            }
+          }
         }
         if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
           nations = setMutualStance(
@@ -419,6 +456,13 @@ function processMovements(input: {
     }
 
     lastBattleTick = { ...lastBattleTick, [destId]: tickCount };
+    const attackerTroopsBefore =
+      arrival.composition.infantry +
+      arrival.composition.cavalry +
+      arrival.composition.artillery;
+    const defenderTroopsBefore =
+      (defenderSide.infantry + defenderSide.cavalry + defenderSide.artillery) ||
+      0;
     battles.push({
       id: newBattleId(),
       tick: tickCount,
@@ -429,6 +473,8 @@ function processMovements(input: {
       defenderLosses: result.defenderLosses,
       totalAttackerLosses: result.totalAttackerLosses,
       totalDefenderLosses: result.totalDefenderLosses,
+      attackerTroopsBefore,
+      defenderTroopsBefore,
       attackerWon: result.attackerWon,
       conquered,
       controlAfter: Math.round(controlAfter),

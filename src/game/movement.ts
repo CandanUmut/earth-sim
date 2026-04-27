@@ -21,6 +21,11 @@ export function newMovementId(): string {
   return `mv-${movementCounter}-${Date.now().toString(36)}`;
 }
 
+/**
+ * Dijkstra over land + naval edges. Land hops cost 1, naval hops cost 2 so
+ * BFS-like shortest paths still naturally prefer dry routes when both
+ * exist.
+ */
 export function findPath(
   countries: Record<string, Country>,
   fromId: string,
@@ -31,11 +36,14 @@ export function findPath(
   const end = countries[toId];
   if (!start || !end) return null;
 
-  const queue: string[] = [fromId];
+  const dist: Record<string, number> = { [fromId]: 0 };
   const cameFrom: Record<string, string | null> = { [fromId]: null };
+  // Tiny priority queue using simple array sort; 180 nodes — fine.
+  const queue: Array<{ id: string; d: number }> = [{ id: fromId, d: 0 }];
 
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    queue.sort((a, b) => a.d - b.d);
+    const { id: current, d } = queue.shift()!;
     if (current === toId) {
       const path: string[] = [];
       let cursor: string | null = current;
@@ -45,15 +53,33 @@ export function findPath(
       }
       return path;
     }
+    if (d > (dist[current] ?? Infinity)) continue;
     const country = countries[current];
     if (!country) continue;
-    for (const neighbor of country.neighbors) {
-      if (neighbor in cameFrom) continue;
-      cameFrom[neighbor] = current;
-      queue.push(neighbor);
-    }
+    const expand = (next: string, cost: number) => {
+      const newDist = d + cost;
+      if (newDist < (dist[next] ?? Infinity)) {
+        dist[next] = newDist;
+        cameFrom[next] = current;
+        queue.push({ id: next, d: newDist });
+      }
+    };
+    for (const n of country.neighbors) expand(n, 1);
+    for (const n of country.navalNeighbors) expand(n, 2);
   }
   return null;
+}
+
+/** True iff the hop from `from` → `to` is a sea crossing (not a land border). */
+export function isNavalLeg(
+  countries: Record<string, Country>,
+  from: string,
+  to: string,
+): boolean {
+  const a = countries[from];
+  if (!a) return false;
+  if (a.neighbors.includes(to)) return false;
+  return a.navalNeighbors.includes(to);
 }
 
 export function advanceMovement(mv: TroopMovement): TroopMovement | null {

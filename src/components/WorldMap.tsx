@@ -1,0 +1,189 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import * as d3 from 'd3';
+import type { Feature, FeatureCollection, Geometry } from 'geojson';
+import { useGameStore } from '../store/gameStore';
+import { countryFill } from '../game/world';
+
+type Size = { w: number; h: number };
+
+function useWindowSize(): Size {
+  const [size, setSize] = useState<Size>(() => ({
+    w: typeof window === 'undefined' ? 1280 : window.innerWidth,
+    h: typeof window === 'undefined' ? 800 : window.innerHeight,
+  }));
+  useEffect(() => {
+    const onResize = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return size;
+}
+
+export default function WorldMap() {
+  const geo = useGameStore((s) => s.geo);
+  const setSelected = useGameStore((s) => s.setSelected);
+  const setHovered = useGameStore((s) => s.setHovered);
+  const selectedId = useGameStore((s) => s.selectedCountryId);
+  const hoveredId = useGameStore((s) => s.hoveredCountryId);
+
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const gRef = useRef<SVGGElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+
+  const { w, h } = useWindowSize();
+
+  // Build the projection + path generator once per geo + viewport.
+  const pathD = useMemo(() => {
+    if (!geo) return null;
+    const projection = d3.geoMercator().fitSize([w, h], geo as FeatureCollection);
+    const path = d3.geoPath(projection);
+    return { projection, path };
+  }, [geo, w, h]);
+
+  // Set up zoom/pan once.
+  useEffect(() => {
+    if (!svgRef.current || !gRef.current) return;
+    const svg = d3.select(svgRef.current);
+    const g = d3.select(gRef.current);
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([1, 8])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform.toString());
+        // Keep stroke width visually constant under zoom.
+        g.selectAll<SVGPathElement, unknown>('path.country').attr(
+          'stroke-width',
+          0.5 / event.transform.k,
+        );
+      });
+    svg.call(zoom);
+    return () => {
+      svg.on('.zoom', null);
+    };
+  }, []);
+
+  // Update strokes when selection / hover changes.
+  useEffect(() => {
+    if (!gRef.current) return;
+    const g = d3.select(gRef.current);
+    g.selectAll<SVGPathElement, Feature<Geometry, { id?: string }>>('path.country')
+      .attr('stroke', (d) => {
+        const id = (d as unknown as { id: string }).id;
+        if (id === selectedId) return 'var(--accent-gold)';
+        if (id === hoveredId) return 'var(--ink)';
+        return 'var(--ink)';
+      })
+      .attr('stroke-width', (d) => {
+        const id = (d as unknown as { id: string }).id;
+        if (id === selectedId) return 1.6;
+        if (id === hoveredId) return 1.2;
+        return 0.5;
+      })
+      .attr('stroke-opacity', (d) => {
+        const id = (d as unknown as { id: string }).id;
+        if (id === selectedId || id === hoveredId) return 0.95;
+        return 0.55;
+      });
+  }, [selectedId, hoveredId]);
+
+  if (!geo || !pathD) {
+    return (
+      <div className="absolute inset-0 grid place-items-center text-ink-faded italic">
+        Drawing the world…
+      </div>
+    );
+  }
+
+  const features = (geo as FeatureCollection).features as Array<
+    Feature<Geometry, { id?: string }>
+  >;
+
+  return (
+    <>
+      <svg
+        ref={svgRef}
+        width={w}
+        height={h}
+        viewBox={`0 0 ${w} ${h}`}
+        className="absolute inset-0 select-none"
+        style={{ background: 'var(--paper)' }}
+      >
+        <defs>
+          <radialGradient id="vignette" cx="50%" cy="50%" r="75%">
+            <stop offset="60%" stopColor="rgba(0,0,0,0)" />
+            <stop offset="100%" stopColor="rgba(26,24,20,0.18)" />
+          </radialGradient>
+        </defs>
+        <g ref={gRef}>
+          {features.map((f) => {
+            const id = (f as { id?: string }).id ?? '';
+            const d = pathD.path(f) ?? '';
+            return (
+              <path
+                key={id}
+                className="country"
+                d={d}
+                data-id={id}
+                fill={countryFill(id)}
+                stroke="var(--ink)"
+                strokeWidth={0.5}
+                strokeOpacity={0.55}
+                style={{ cursor: 'pointer', transition: 'fill 600ms ease' }}
+                onMouseEnter={(e) => {
+                  setHovered(id);
+                  const props = (f.properties ?? {}) as Record<string, unknown>;
+                  const name = (props.ADMIN as string) || (props.NAME as string) || id;
+                  if (tooltipRef.current) {
+                    tooltipRef.current.style.opacity = '1';
+                    tooltipRef.current.textContent = name;
+                    tooltipRef.current.style.left = `${e.clientX + 14}px`;
+                    tooltipRef.current.style.top = `${e.clientY + 14}px`;
+                  }
+                }}
+                onMouseMove={(e) => {
+                  if (tooltipRef.current) {
+                    tooltipRef.current.style.left = `${e.clientX + 14}px`;
+                    tooltipRef.current.style.top = `${e.clientY + 14}px`;
+                  }
+                }}
+                onMouseLeave={() => {
+                  setHovered(null);
+                  if (tooltipRef.current) tooltipRef.current.style.opacity = '0';
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelected(id);
+                }}
+              />
+            );
+          })}
+        </g>
+        <rect
+          width={w}
+          height={h}
+          fill="url(#vignette)"
+          pointerEvents="none"
+        />
+      </svg>
+      <div
+        ref={tooltipRef}
+        className="display"
+        style={{
+          position: 'fixed',
+          pointerEvents: 'none',
+          opacity: 0,
+          transition: 'opacity 120ms ease',
+          background: 'var(--paper)',
+          color: 'var(--ink)',
+          border: '1px solid var(--ink)',
+          padding: '4px 10px',
+          fontSize: 14,
+          fontStyle: 'italic',
+          boxShadow: '0 1px 4px var(--paper-shadow)',
+          zIndex: 50,
+          whiteSpace: 'nowrap',
+        }}
+      />
+    </>
+  );
+}

@@ -1,4 +1,4 @@
-import { geoCentroid } from 'd3';
+import { geoCentroid, geoArea } from 'd3';
 import type { Feature, FeatureCollection, Geometry, Position } from 'geojson';
 
 export type Terrain = 'plains' | 'mountain' | 'island' | 'desert' | 'forest';
@@ -11,6 +11,8 @@ export type Country = {
   population: number;
   baseEconomy: number;
   terrain: Terrain;
+  /** Surface area in steradians (Mercator-independent). Used to size labels. */
+  geoArea: number;
 };
 
 export type CountryFeature = Feature<Geometry, Record<string, unknown>>;
@@ -176,6 +178,7 @@ export async function loadWorld(): Promise<WorldData> {
       population: Math.round(featurePopulation(feature)),
       baseEconomy: featureBaseEconomy(feature),
       terrain: inferTerrain(feature, centroid),
+      geoArea: geoArea(feature),
     };
   });
 

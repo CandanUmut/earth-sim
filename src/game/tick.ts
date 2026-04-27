@@ -25,7 +25,7 @@ import {
   type AIBrain,
 } from './ai';
 import { evaluateVictory, type VictoryState } from './victory';
-import { BALANCE_MOVEMENT } from './balance';
+import { BALANCE_MOVEMENT, BALANCE_CONTROL } from './balance';
 
 export type GameDate = { year: number; month: number };
 
@@ -63,7 +63,22 @@ export type BattleLogEntry = {
   attackerLosses: number;
   defenderLosses: number;
   attackerWon: boolean;
+  /** Whether THIS battle flipped ownership (control hit 0). */
   conquered: boolean;
+  /** Control remaining after this battle (0 = flipped). */
+  controlAfter: number;
+};
+
+export type ArrivalEvent = {
+  movementId: string;
+  ownerId: string;
+  fromId: string;
+  toId: string;
+  troops: number;
+  /** Path from origin to destination, used to draw the trail. */
+  path: string[];
+  arrivedAt: number; // performance.now() timestamp
+  outcome: 'reinforce' | 'won' | 'lost' | 'partial';
 };
 
 export type TickInput = {
@@ -72,6 +87,8 @@ export type TickInput = {
   countries: Record<string, Country>;
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
+  control: Record<string, number>;
+  lastBattleTick: Record<string, number>;
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
   playerCountryId: string | null;
@@ -83,11 +100,13 @@ export type TickOutput = {
   date: GameDate;
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
+  control: Record<string, number>;
+  lastBattleTick: Record<string, number>;
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
   newBattles: BattleLogEntry[];
+  newArrivals: ArrivalEvent[];
   victory: VictoryState;
-  flashedCountryIds: string[];
 };
 
 let battleCounter = 0;
@@ -127,6 +146,24 @@ function applyEconomy(
   return updated;
 }
 
+function regenerateControl(
+  control: Record<string, number>,
+  lastBattleTick: Record<string, number>,
+  tickCount: number,
+): Record<string, number> {
+  const next: Record<string, number> = { ...control };
+  for (const id of Object.keys(control)) {
+    const last = lastBattleTick[id] ?? -Infinity;
+    if (tickCount - last < BALANCE_CONTROL.regenGraceTicks) continue;
+    if (next[id] >= BALANCE_CONTROL.fullControl) continue;
+    next[id] = Math.min(
+      BALANCE_CONTROL.fullControl,
+      next[id] + BALANCE_CONTROL.regenPerTick,
+    );
+  }
+  return next;
+}
+
 function setMutualStance(
   nations: Record<string, Nation>,
   a: string,
@@ -141,29 +178,32 @@ function setMutualStance(
   return next;
 }
 
-/**
- * Process all in-flight movements one tick. Returns the updated movement
- * list, mutated nations + ownership, and any battles that resolved.
- */
 function processMovements(input: {
   countries: Record<string, Country>;
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
+  control: Record<string, number>;
+  lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   tickCount: number;
   rng: () => number;
+  now: number;
 }): {
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
+  control: Record<string, number>;
+  lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   battles: BattleLogEntry[];
-  flashed: string[];
+  arrivals: ArrivalEvent[];
 } {
-  const { countries, tickCount, rng } = input;
+  const { countries, tickCount, rng, now } = input;
   let ownership = { ...input.ownership };
   let nations = { ...input.nations };
+  let control = { ...input.control };
+  let lastBattleTick = { ...input.lastBattleTick };
   const battles: BattleLogEntry[] = [];
-  const flashed: string[] = [];
+  const arrivals: ArrivalEvent[] = [];
   const stillMoving: TroopMovement[] = [];
 
   for (const mv of input.movements) {
@@ -172,7 +212,6 @@ function processMovements(input: {
       stillMoving.push(advanced);
       continue;
     }
-    // Arrival.
     const arrival = advanced ?? mv;
     const destId = arrival.path[arrival.path.length - 1];
     const destCountry = countries[destId];
@@ -191,11 +230,27 @@ function processMovements(input: {
           },
         };
       }
-      flashed.push(destId);
+      // Reinforcing also restores control on the destination.
+      control = {
+        ...control,
+        [destId]: Math.min(
+          BALANCE_CONTROL.fullControl,
+          (control[destId] ?? BALANCE_CONTROL.fullControl) + 25,
+        ),
+      };
+      arrivals.push({
+        movementId: arrival.id,
+        ownerId: arrival.ownerId,
+        fromId: arrival.fromId,
+        toId: destId,
+        troops: arrival.troops,
+        path: arrival.path,
+        arrivedAt: now,
+        outcome: 'reinforce',
+      });
       continue;
     }
 
-    // Hostile arrival.
     const defenderOwnerId = ownerOfDest;
     const defenderNation = defenderOwnerId
       ? nations[defenderOwnerId]
@@ -213,9 +268,6 @@ function processMovements(input: {
       rng,
     );
 
-    // Defender losses come out of the *defending owner's* pool — but they
-    // could be the local garrison only. For simplicity we treat the whole
-    // owner's troop pool as the defending force's strength.
     if (defenderOwnerId && defenderNation) {
       nations = {
         ...nations,
@@ -227,22 +279,71 @@ function processMovements(input: {
     }
 
     let conquered = false;
+    let controlAfter = control[destId] ?? BALANCE_CONTROL.fullControl;
+    let outcome: 'won' | 'lost' | 'partial' = 'lost';
+
     if (result.attackerWon) {
-      // Move surviving attackers into the captured country, return to owner pool.
+      // Damage control instead of immediate flip.
+      const damage =
+        BALANCE_CONTROL.damagePerVictoryMin +
+        rng() *
+          (BALANCE_CONTROL.damagePerVictoryMax -
+            BALANCE_CONTROL.damagePerVictoryMin);
+      const before = controlAfter;
+      controlAfter = Math.max(0, before - damage);
+      control = { ...control, [destId]: controlAfter };
+
+      // Surviving attackers garrison the contested ground.
       const survivors = result.attackerSurvivors;
       const refreshedAttacker = nations[arrival.ownerId];
-      if (refreshedAttacker) {
-        nations = {
-          ...nations,
-          [arrival.ownerId]: {
-            ...refreshedAttacker,
-            troops: refreshedAttacker.troops + survivors,
-          },
-        };
+      if (controlAfter <= 0) {
+        // Flip ownership and reset control.
+        ownership = { ...ownership, [destId]: arrival.ownerId };
+        control = { ...control, [destId]: BALANCE_CONTROL.fullControl };
+        conquered = true;
+        if (refreshedAttacker) {
+          nations = {
+            ...nations,
+            [arrival.ownerId]: {
+              ...refreshedAttacker,
+              troops: refreshedAttacker.troops + survivors,
+            },
+          };
+        }
+        if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
+          nations = setMutualStance(
+            nations,
+            arrival.ownerId,
+            defenderOwnerId,
+            'war',
+          );
+        }
+        outcome = 'won';
+      } else {
+        // Partial victory — survivors return home (abstractly).
+        if (refreshedAttacker) {
+          nations = {
+            ...nations,
+            [arrival.ownerId]: {
+              ...refreshedAttacker,
+              troops:
+                refreshedAttacker.troops + Math.floor(survivors * 0.6),
+            },
+          };
+        }
+        // Skirmish always declares war if not already.
+        if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
+          nations = setMutualStance(
+            nations,
+            arrival.ownerId,
+            defenderOwnerId,
+            'war',
+          );
+        }
+        outcome = 'partial';
       }
-      ownership = { ...ownership, [destId]: arrival.ownerId };
-      conquered = true;
-      // War declared if not already.
+    } else {
+      // Routed — losing attackers vanish.
       if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
         nations = setMutualStance(
           nations,
@@ -251,11 +352,10 @@ function processMovements(input: {
           'war',
         );
       }
-    } else {
-      // Attacker routed — survivors are lost (rounding). Could route them
-      // home in a later phase.
+      outcome = 'lost';
     }
 
+    lastBattleTick = { ...lastBattleTick, [destId]: tickCount };
     battles.push({
       id: newBattleId(),
       tick: tickCount,
@@ -266,14 +366,31 @@ function processMovements(input: {
       defenderLosses: result.defenderLosses,
       attackerWon: result.attackerWon,
       conquered,
+      controlAfter: Math.round(controlAfter),
     });
-    flashed.push(destId);
+    arrivals.push({
+      movementId: arrival.id,
+      ownerId: arrival.ownerId,
+      fromId: arrival.fromId,
+      toId: destId,
+      troops: arrival.troops,
+      path: arrival.path,
+      arrivedAt: now,
+      outcome,
+    });
   }
 
-  return { ownership, nations, movements: stillMoving, battles, flashed };
+  return {
+    ownership,
+    nations,
+    control,
+    lastBattleTick,
+    movements: stillMoving,
+    battles,
+    arrivals,
+  };
 }
 
-/** Apply a single AI action to mutable copies of state. Returns updates. */
 function applyAIAction(args: {
   selfId: string;
   action: AIAction;
@@ -392,9 +509,9 @@ function applyAIAction(args: {
   }
 }
 
-/** The full per-tick simulation step. Pure (given an injected rng). */
 export function runTick(input: TickInput): TickOutput {
   const date = advanceDate(input.date);
+  const now = performance.now();
 
   // 1) Economy & upkeep
   let nations = applyEconomy(input.countries, input.ownership, input.nations);
@@ -404,13 +521,21 @@ export function runTick(input: TickInput): TickOutput {
     countries: input.countries,
     ownership: input.ownership,
     nations,
+    control: input.control,
+    lastBattleTick: input.lastBattleTick,
     movements: input.movements,
     tickCount: input.tickCount,
     rng: input.rng,
+    now,
   });
   nations = moveStep.nations;
   let ownership = moveStep.ownership;
   let movements = moveStep.movements;
+  let control = moveStep.control;
+  let lastBattleTick = moveStep.lastBattleTick;
+
+  // 2b) Control regeneration on quiet ground
+  control = regenerateControl(control, lastBattleTick, input.tickCount);
 
   // 3) AI thinking
   let brains = { ...input.brains };
@@ -424,7 +549,6 @@ export function runTick(input: TickInput): TickOutput {
       brains[id] = advancedBrain;
       continue;
     }
-    // Time to think.
     const action = decideAction({
       selfId: id,
       countries: input.countries,
@@ -447,7 +571,7 @@ export function runTick(input: TickInput): TickOutput {
     brains[id] = { ...advancedBrain, ticksSinceThink: 0 };
   }
 
-  // 4) Victory check (only if player exists)
+  // 4) Victory check
   let victory: VictoryState = { kind: 'ongoing' };
   if (input.playerCountryId && input.homeCountryId) {
     victory = evaluateVictory({
@@ -463,10 +587,12 @@ export function runTick(input: TickInput): TickOutput {
     date,
     ownership,
     nations,
+    control,
+    lastBattleTick,
     brains,
     movements,
     newBattles: moveStep.battles,
+    newArrivals: moveStep.arrivals,
     victory,
-    flashedCountryIds: moveStep.flashed,
   };
 }

@@ -35,6 +35,8 @@ export const BALANCE = {
 export const BALANCE_MOVEMENT = {
   /** Fraction of troops that must remain at home as garrison. */
   homeGarrisonFraction: 0.1,
+  /** How long an arrival ghost trail lingers after the column lands (ms). */
+  arrivalTrailMs: 3000,
 } as const;
 
 export const BALANCE_AI = {
@@ -61,4 +63,16 @@ export const BALANCE_AI = {
 
 export const BALANCE_VICTORY = {
   populationShareToWin: 0.6,
+} as const;
+
+export const BALANCE_CONTROL = {
+  /** Starting control all countries possess over their own territory. */
+  fullControl: 100,
+  /** Control points lost per won attack — randomized between min and max. */
+  damagePerVictoryMin: 35,
+  damagePerVictoryMax: 70,
+  /** Control regenerated per tick when not under attack (ticks since last battle). */
+  regenPerTick: 2,
+  /** Ticks of grace before regen kicks in. */
+  regenGraceTicks: 6,
 } as const;

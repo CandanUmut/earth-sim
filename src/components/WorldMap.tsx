@@ -5,6 +5,7 @@ import { useGameStore } from '../store/gameStore';
 import { countryFill } from '../game/world';
 import MovementArrows from './MovementArrows';
 import BattleFlashes from './BattleFlashes';
+import CountryAnnotations from './CountryAnnotations';
 
 type Size = { w: number; h: number };
 
@@ -21,20 +22,16 @@ function useWindowSize(): Size {
   return size;
 }
 
-/** Blend a fill color with a stance tint. Returns the final color string. */
-function blendStance(
-  base: string,
-  stance: 'war' | 'neutral' | 'allied' | 'self' | null,
-): string {
+type StanceClass = 'war' | 'neutral' | 'allied' | 'self' | null;
+
+function blendStance(base: string, stance: StanceClass): string {
   if (!stance || stance === 'neutral') return base;
-  // base is hsl(h s% l%) — tweak via interpolation toward an accent.
   const target =
     stance === 'self'
-      ? '#d4a936' // gold-ish
+      ? '#d4a936'
       : stance === 'war'
         ? '#a13838'
-        : '#7d8e5f'; // sage-ish
-  // Use CSS color-mix where supported; modern Chromium does. Fallback = base.
+        : '#7d8e5f';
   return `color-mix(in srgb, ${base} 70%, ${target} 30%)`;
 }
 
@@ -44,6 +41,7 @@ export default function WorldMap() {
   const nations = useGameStore((s) => s.nations);
   const playerId = useGameStore((s) => s.playerCountryId);
   const movements = useGameStore((s) => s.movements);
+  const arrivalTrails = useGameStore((s) => s.arrivalTrails);
   const countries = useGameStore((s) => s.countries);
   const setSelected = useGameStore((s) => s.setSelected);
   const setHovered = useGameStore((s) => s.setHovered);
@@ -63,7 +61,6 @@ export default function WorldMap() {
     return { projection, path };
   }, [geo, w, h]);
 
-  // Pan/zoom once.
   useEffect(() => {
     if (!svgRef.current || !gRef.current) return;
     const svg = d3.select(svgRef.current);
@@ -80,7 +77,7 @@ export default function WorldMap() {
     };
   }, []);
 
-  // Update fills when ownership or player stance changes.
+  // Per-country fill + stripe overlay updates on ownership / stance / player change.
   useEffect(() => {
     if (!gRef.current) return;
     const playerStance = playerId ? nations[playerId]?.stance ?? {} : {};
@@ -89,14 +86,38 @@ export default function WorldMap() {
       const id = el.dataset.id ?? '';
       const owner = ownership[id] ?? id;
       const base = countryFill(owner);
-      let stance: 'war' | 'neutral' | 'allied' | 'self' | null = null;
+      let stance: StanceClass = null;
       if (playerId && owner === playerId) stance = 'self';
       else if (playerId && playerStance[owner]) stance = playerStance[owner];
       el.setAttribute('fill', blendStance(base, stance));
     });
+    // Stripe overlays
+    const stripes = gRef.current.querySelectorAll<SVGPathElement>(
+      'path.country-stripe',
+    );
+    stripes.forEach((el) => {
+      const id = el.dataset.id ?? '';
+      const owner = ownership[id] ?? id;
+      let pattern: string | null = null;
+      if (playerId && owner !== playerId && playerStance[owner] === 'war') {
+        pattern = 'url(#stripe-war)';
+      } else if (
+        playerId &&
+        owner !== playerId &&
+        playerStance[owner] === 'allied'
+      ) {
+        pattern = 'url(#stripe-allied)';
+      }
+      if (pattern) {
+        el.setAttribute('fill', pattern);
+        el.setAttribute('opacity', '0.5');
+      } else {
+        el.setAttribute('fill', 'transparent');
+        el.setAttribute('opacity', '0');
+      }
+    });
   }, [ownership, nations, playerId]);
 
-  // Update strokes when selection / hover changes.
   useEffect(() => {
     if (!gRef.current) return;
     const paths = gRef.current.querySelectorAll<SVGPathElement>('path.country');
@@ -147,8 +168,27 @@ export default function WorldMap() {
             <stop offset="60%" stopColor="rgba(0,0,0,0)" />
             <stop offset="100%" stopColor="rgba(26,24,20,0.18)" />
           </radialGradient>
+          <pattern
+            id="stripe-war"
+            width="6"
+            height="6"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(45)"
+          >
+            <line x1="0" y1="0" x2="0" y2="6" stroke="var(--accent-blood)" strokeWidth="1.3" />
+          </pattern>
+          <pattern
+            id="stripe-allied"
+            width="6"
+            height="6"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(-45)"
+          >
+            <line x1="0" y1="0" x2="0" y2="6" stroke="var(--accent-sage)" strokeWidth="1.3" />
+          </pattern>
         </defs>
         <g ref={gRef}>
+          {/* Base country fills */}
           {features.map((f) => {
             const id = (f as { id?: string }).id ?? '';
             const d = pathD.path(f) ?? '';
@@ -195,14 +235,34 @@ export default function WorldMap() {
               />
             );
           })}
+          {/* Stance stripe overlays — same path, no events */}
+          {features.map((f) => {
+            const id = (f as { id?: string }).id ?? '';
+            const d = pathD.path(f) ?? '';
+            return (
+              <path
+                key={`stripe-${id}`}
+                className="country-stripe"
+                d={d}
+                data-id={id}
+                fill="transparent"
+                opacity={0}
+                pointerEvents="none"
+                vectorEffect="non-scaling-stroke"
+                style={{ transition: 'opacity 600ms ease' }}
+              />
+            );
+          })}
           <MovementArrows
             projection={pathD.projection}
             movements={movements}
+            trails={arrivalTrails}
             countries={countries}
             playerId={playerId}
             playerStance={playerStance}
           />
           <BattleFlashes projection={pathD.projection} />
+          <CountryAnnotations projection={pathD.projection} />
         </g>
         <rect
           width={w}

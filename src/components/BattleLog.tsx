@@ -95,8 +95,13 @@ export default function BattleLog() {
               const accent = b.conquered
                 ? 'var(--accent-blood)'
                 : b.attackerWon
-                  ? 'var(--ink)'
+                  ? '#c97a1f'
                   : 'var(--accent-sage)';
+              const verdict = b.conquered
+                ? '— CAPTURED'
+                : b.attackerWon
+                  ? `— pushed in (control ${b.controlAfter})`
+                  : '— repelled by';
               return (
                 <div
                   key={b.id}
@@ -112,7 +117,14 @@ export default function BattleLog() {
                   <div style={{ fontSize: 13, lineHeight: 1.3 }}>
                     <strong>{attacker}</strong> →{' '}
                     <span style={{ fontStyle: 'italic' }}>{place}</span>{' '}
-                    {b.conquered ? '— captured' : b.attackerWon ? '— won' : '— repelled by'}{' '}
+                    <span
+                      style={{
+                        color: accent,
+                        fontWeight: b.conquered ? 600 : 400,
+                      }}
+                    >
+                      {verdict}
+                    </span>{' '}
                     {!b.attackerWon && <strong>{defender}</strong>}
                   </div>
                   <div

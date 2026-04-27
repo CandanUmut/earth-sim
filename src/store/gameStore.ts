@@ -14,6 +14,7 @@ import {
   runTick,
   type GameDate,
   type BattleLogEntry,
+  type ArrivalEvent,
 } from '../game/tick';
 import {
   newBrain,
@@ -27,16 +28,9 @@ import {
   type TroopMovement,
 } from '../game/movement';
 import { type VictoryState } from '../game/victory';
-import { BALANCE, BALANCE_MOVEMENT } from '../game/balance';
+import { BALANCE, BALANCE_MOVEMENT, BALANCE_CONTROL } from '../game/balance';
 
 export type Speed = 1 | 2 | 3;
-
-export type FlashEvent = {
-  countryId: string;
-  /** Timestamp ms — rendering fades over ~1.5 s. */
-  startedAt: number;
-  kind: 'battle' | 'reinforce';
-};
 
 export type GameState = {
   // World data
@@ -51,9 +45,11 @@ export type GameState = {
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
   brains: Record<string, AIBrain>;
+  control: Record<string, number>;
+  lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   battleLog: BattleLogEntry[];
-  flashes: FlashEvent[];
+  arrivalTrails: ArrivalEvent[];
   date: GameDate;
   tickCount: number;
 
@@ -82,20 +78,17 @@ export type GameState = {
   recruitTroops: (amount: number) => void;
   investInTech: () => void;
   tick: () => void;
-  // Player military
   openDispatch: (toId: string) => void;
   closeDispatch: () => void;
   dispatchTroops: (toId: string, troops: number) => void;
-  // Diplomacy
   declareWar: (targetId: string) => void;
   proposePeace: (targetId: string) => void;
   proposeAlliance: (targetId: string) => void;
   sendGift: (targetId: string, gold: number) => void;
-  // UI
   toggleBattleLog: () => void;
   dismissEndScreen: () => void;
   newCampaign: () => void;
-  pruneFlashes: () => void;
+  pruneTrails: () => void;
 };
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -137,9 +130,11 @@ const initialState = {
   ownership: {} as Record<string, string>,
   nations: {} as Record<string, Nation>,
   brains: {} as Record<string, AIBrain>,
+  control: {} as Record<string, number>,
+  lastBattleTick: {} as Record<string, number>,
   movements: [] as TroopMovement[],
   battleLog: [] as BattleLogEntry[],
-  flashes: [] as FlashEvent[],
+  arrivalTrails: [] as ArrivalEvent[],
   date: { year: 1900, month: 0 } as GameDate,
   tickCount: 0,
   playerCountryId: null as string | null,
@@ -166,12 +161,14 @@ export const useGameStore = create<GameState>((set, get) => ({
       const ownership: Record<string, string> = {};
       const nations: Record<string, Nation> = {};
       const brains: Record<string, AIBrain> = {};
+      const control: Record<string, number> = {};
       const order: string[] = [];
       for (const c of countries) {
         byId[c.id] = c;
         ownership[c.id] = c.id;
         nations[c.id] = makeStartingNation(c);
         brains[c.id] = newBrain();
+        control[c.id] = BALANCE_CONTROL.fullControl;
         order.push(c.id);
       }
       set({
@@ -180,6 +177,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         ownership,
         nations,
         brains,
+        control,
         geo,
         loaded: true,
         loading: false,
@@ -283,6 +281,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       ownership: s.ownership,
       nations: s.nations,
       brains: s.brains,
+      control: s.control,
+      lastBattleTick: s.lastBattleTick,
       movements: s.movements,
       playerCountryId: s.playerCountryId,
       homeCountryId: s.homeCountryId,
@@ -290,15 +290,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     });
 
     const now = performance.now();
-    const newFlashes: FlashEvent[] = result.flashedCountryIds.map((cid) => ({
-      countryId: cid,
-      startedAt: now,
-      kind: 'battle',
-    }));
-    // Drop stale flashes (>1500 ms).
-    const flashes = [...s.flashes, ...newFlashes].filter(
-      (f) => now - f.startedAt < 1500,
-    );
+    const trails = [
+      ...s.arrivalTrails,
+      ...result.newArrivals,
+    ].filter((t) => now - t.arrivedAt < BALANCE_MOVEMENT.arrivalTrailMs);
 
     const battleLog = [...result.newBattles, ...s.battleLog].slice(0, 20);
 
@@ -308,9 +303,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       ownership: result.ownership,
       nations: result.nations,
       brains: result.brains,
+      control: result.control,
+      lastBattleTick: result.lastBattleTick,
       movements: result.movements,
       battleLog,
-      flashes,
+      arrivalTrails: trails,
       victory: result.victory,
     });
 
@@ -334,7 +331,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!playerCountryId) return;
     const player = nations[playerCountryId];
     if (!player) return;
-    // Find best origin: any of MY territories that can reach the target.
     const myIds = Object.entries(ownership)
       .filter(([, owner]) => owner === playerCountryId)
       .map(([tid]) => tid);
@@ -444,12 +440,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     const ownership: Record<string, string> = {};
     const nations: Record<string, Nation> = {};
     const brains: Record<string, AIBrain> = {};
+    const control: Record<string, number> = {};
     for (const id of countryOrder) {
       const c = countries[id];
       if (!c) continue;
       ownership[id] = id;
       nations[id] = makeStartingNation(c);
       brains[id] = newBrain();
+      control[id] = BALANCE_CONTROL.fullControl;
     }
     set({
       ...initialState,
@@ -459,14 +457,17 @@ export const useGameStore = create<GameState>((set, get) => ({
       ownership,
       nations,
       brains,
+      control,
       loaded: true,
     });
   },
 
-  pruneFlashes: () => {
+  pruneTrails: () => {
     const now = performance.now();
     set({
-      flashes: get().flashes.filter((f) => now - f.startedAt < 1500),
+      arrivalTrails: get().arrivalTrails.filter(
+        (t) => now - t.arrivedAt < BALANCE_MOVEMENT.arrivalTrailMs,
+      ),
     });
   },
 }));

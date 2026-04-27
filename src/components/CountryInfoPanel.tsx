@@ -60,6 +60,9 @@ export default function CountryInfoPanel() {
     const oId = s.ownership[s.selectedCountryId];
     return oId ? (s.nations[oId] ?? null) : null;
   });
+  const control = useGameStore((s) =>
+    s.selectedCountryId ? s.control[s.selectedCountryId] ?? 100 : 100,
+  );
   const playerId = useGameStore((s) => s.playerCountryId);
   const playerNation = useGameStore((s) =>
     s.playerCountryId ? s.nations[s.playerCountryId] : null,
@@ -169,6 +172,44 @@ export default function CountryInfoPanel() {
           <Stat label="Population" value={formatPop(country.population)} />
           <Stat label="Terrain" value={terrainLabels[country.terrain]} italic />
           <Stat label="Borders" value={`${country.neighbors.length}`} />
+          {control < 100 && (
+            <div
+              style={{
+                margin: '8px 0 4px',
+                padding: '6px 8px',
+                border: '1px solid var(--accent-blood)',
+                background: 'rgba(122, 31, 31, 0.06)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--accent-blood)',
+                  marginBottom: 4,
+                }}
+              >
+                Contested · {Math.round(control)}/100
+              </div>
+              <div
+                style={{
+                  height: 4,
+                  background: 'var(--paper)',
+                  border: '1px solid var(--accent-blood)',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${control}%`,
+                    height: '100%',
+                    background: 'var(--accent-blood)',
+                    transition: 'width 600ms ease',
+                  }}
+                />
+              </div>
+            </div>
+          )}
           {nation && (
             <>
               <Stat label="Troops" value={fmtNum(nation.troops)} mono />

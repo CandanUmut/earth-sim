@@ -6,8 +6,11 @@ import {
   recruitCost,
   techInvestmentCost,
   techIncrement,
+  totalTroops,
+  asComposition,
   type Nation,
   type Stance,
+  type Composition,
 } from './economy';
 import {
   advanceMovement,
@@ -16,7 +19,7 @@ import {
   newMovementId,
   type TroopMovement,
 } from './movement';
-import { resolveBattle } from './combat';
+import { resolveBattle, type LossesByType } from './combat';
 import {
   decideAction,
   evaluateAllianceProposal,
@@ -25,7 +28,7 @@ import {
   type AIBrain,
 } from './ai';
 import { evaluateVictory, type VictoryState } from './victory';
-import { BALANCE_MOVEMENT, BALANCE_CONTROL } from './balance';
+import { BALANCE_MOVEMENT, BALANCE_CONTROL, BALANCE_TROOPS } from './balance';
 
 export type GameDate = { year: number; month: number };
 
@@ -60,12 +63,12 @@ export type BattleLogEntry = {
   attackerOwnerId: string;
   defenderOwnerId: string;
   countryId: string;
-  attackerLosses: number;
-  defenderLosses: number;
+  attackerLosses: LossesByType;
+  defenderLosses: LossesByType;
+  totalAttackerLosses: number;
+  totalDefenderLosses: number;
   attackerWon: boolean;
-  /** Whether THIS battle flipped ownership (control hit 0). */
   conquered: boolean;
-  /** Control remaining after this battle (0 = flipped). */
   controlAfter: number;
 };
 
@@ -75,9 +78,8 @@ export type ArrivalEvent = {
   fromId: string;
   toId: string;
   troops: number;
-  /** Path from origin to destination, used to draw the trail. */
   path: string[];
-  arrivedAt: number; // performance.now() timestamp
+  arrivedAt: number;
   outcome: 'reinforce' | 'won' | 'lost' | 'partial';
 };
 
@@ -88,6 +90,7 @@ export type TickInput = {
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
   control: Record<string, number>;
+  contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
@@ -101,6 +104,7 @@ export type TickOutput = {
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
   control: Record<string, number>;
+  contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
@@ -135,23 +139,37 @@ function applyEconomy(
     const income = goldPerTick(country, nation, owned);
     const upkeep = troopUpkeepPerTick(nation);
     let gold = nation.gold + income - upkeep;
-    let troops = nation.troops;
+    let infantry = nation.infantry;
+    let cavalry = nation.cavalry;
+    let artillery = nation.artillery;
     if (gold < 0) {
-      const desertion = Math.ceil(-gold * 10);
-      troops = Math.max(0, troops - desertion);
+      // Desertion proportional across composition.
+      const desertion = Math.ceil(-gold * 8);
+      const total = totalTroops(nation);
+      if (total > 0) {
+        const r = desertion / total;
+        infantry = Math.max(0, infantry - Math.round(infantry * r));
+        cavalry = Math.max(0, cavalry - Math.round(cavalry * r));
+        artillery = Math.max(0, artillery - Math.round(artillery * r));
+      }
       gold = 0;
     }
-    updated[id] = { ...nation, gold, troops };
+    updated[id] = { ...nation, gold, infantry, cavalry, artillery };
   }
   return updated;
 }
 
 function regenerateControl(
   control: Record<string, number>,
+  contestedBy: Record<string, string>,
   lastBattleTick: Record<string, number>,
   tickCount: number,
-): Record<string, number> {
+): {
+  control: Record<string, number>;
+  contestedBy: Record<string, string>;
+} {
   const next: Record<string, number> = { ...control };
+  const stillContested: Record<string, string> = { ...contestedBy };
   for (const id of Object.keys(control)) {
     const last = lastBattleTick[id] ?? -Infinity;
     if (tickCount - last < BALANCE_CONTROL.regenGraceTicks) continue;
@@ -160,8 +178,11 @@ function regenerateControl(
       BALANCE_CONTROL.fullControl,
       next[id] + BALANCE_CONTROL.regenPerTick,
     );
+    if (next[id] >= BALANCE_CONTROL.fullControl) {
+      delete stillContested[id];
+    }
   }
-  return next;
+  return { control: next, contestedBy: stillContested };
 }
 
 function setMutualStance(
@@ -178,11 +199,36 @@ function setMutualStance(
   return next;
 }
 
+function addCompositionsToNation(
+  nation: Nation,
+  add: Composition,
+): Nation {
+  return {
+    ...nation,
+    infantry: nation.infantry + add.infantry,
+    cavalry: nation.cavalry + add.cavalry,
+    artillery: nation.artillery + add.artillery,
+  };
+}
+
+function subtractLossesFromNation(
+  nation: Nation,
+  losses: LossesByType,
+): Nation {
+  return {
+    ...nation,
+    infantry: Math.max(0, nation.infantry - losses.infantry),
+    cavalry: Math.max(0, nation.cavalry - losses.cavalry),
+    artillery: Math.max(0, nation.artillery - losses.artillery),
+  };
+}
+
 function processMovements(input: {
   countries: Record<string, Country>;
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
   control: Record<string, number>;
+  contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   tickCount: number;
@@ -192,6 +238,7 @@ function processMovements(input: {
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
   control: Record<string, number>;
+  contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   battles: BattleLogEntry[];
@@ -201,6 +248,7 @@ function processMovements(input: {
   let ownership = { ...input.ownership };
   let nations = { ...input.nations };
   let control = { ...input.control };
+  let contestedBy = { ...input.contestedBy };
   let lastBattleTick = { ...input.lastBattleTick };
   const battles: BattleLogEntry[] = [];
   const arrivals: ArrivalEvent[] = [];
@@ -224,13 +272,12 @@ function processMovements(input: {
       if (ownerNation) {
         nations = {
           ...nations,
-          [arrival.ownerId]: {
-            ...ownerNation,
-            troops: ownerNation.troops + arrival.troops,
-          },
+          [arrival.ownerId]: addCompositionsToNation(
+            ownerNation,
+            arrival.composition,
+          ),
         };
       }
-      // Reinforcing also restores control on the destination.
       control = {
         ...control,
         [destId]: Math.min(
@@ -238,6 +285,11 @@ function processMovements(input: {
           (control[destId] ?? BALANCE_CONTROL.fullControl) + 25,
         ),
       };
+      if (control[destId] >= BALANCE_CONTROL.fullControl) {
+        const next = { ...contestedBy };
+        delete next[destId];
+        contestedBy = next;
+      }
       arrivals.push({
         movementId: arrival.id,
         ownerId: arrival.ownerId,
@@ -258,23 +310,29 @@ function processMovements(input: {
     const attackerNation = nations[arrival.ownerId];
     if (!attackerNation) continue;
 
+    const attackerSide = {
+      ...arrival.composition,
+      tech: attackerNation.tech,
+    };
+    const defenderSide = defenderNation
+      ? { ...asComposition(defenderNation), tech: defenderNation.tech }
+      : { infantry: 0, cavalry: 0, artillery: 0, tech: 1 };
+
     const result = resolveBattle(
-      { troops: arrival.troops, tech: attackerNation.tech },
-      {
-        troops: defenderNation?.troops ?? 0,
-        tech: defenderNation?.tech ?? 1,
-      },
+      attackerSide,
+      defenderSide,
       destCountry,
+      destCountry.specializations,
       rng,
     );
 
     if (defenderOwnerId && defenderNation) {
       nations = {
         ...nations,
-        [defenderOwnerId]: {
-          ...defenderNation,
-          troops: Math.max(0, defenderNation.troops - result.defenderLosses),
-        },
+        [defenderOwnerId]: subtractLossesFromNation(
+          defenderNation,
+          result.defenderLosses,
+        ),
       };
     }
 
@@ -283,7 +341,6 @@ function processMovements(input: {
     let outcome: 'won' | 'lost' | 'partial' = 'lost';
 
     if (result.attackerWon) {
-      // Damage control instead of immediate flip.
       const damage =
         BALANCE_CONTROL.damagePerVictoryMin +
         rng() *
@@ -292,22 +349,25 @@ function processMovements(input: {
       const before = controlAfter;
       controlAfter = Math.max(0, before - damage);
       control = { ...control, [destId]: controlAfter };
+      contestedBy = { ...contestedBy, [destId]: arrival.ownerId };
 
-      // Surviving attackers garrison the contested ground.
       const survivors = result.attackerSurvivors;
       const refreshedAttacker = nations[arrival.ownerId];
+
       if (controlAfter <= 0) {
-        // Flip ownership and reset control.
         ownership = { ...ownership, [destId]: arrival.ownerId };
         control = { ...control, [destId]: BALANCE_CONTROL.fullControl };
+        const cleared = { ...contestedBy };
+        delete cleared[destId];
+        contestedBy = cleared;
         conquered = true;
         if (refreshedAttacker) {
           nations = {
             ...nations,
-            [arrival.ownerId]: {
-              ...refreshedAttacker,
-              troops: refreshedAttacker.troops + survivors,
-            },
+            [arrival.ownerId]: addCompositionsToNation(
+              refreshedAttacker,
+              survivors,
+            ),
           };
         }
         if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
@@ -320,18 +380,22 @@ function processMovements(input: {
         }
         outcome = 'won';
       } else {
-        // Partial victory — survivors return home (abstractly).
         if (refreshedAttacker) {
+          // 60 % of the survivors stagger home.
+          const r = 0.6;
+          const fallback: Composition = {
+            infantry: Math.floor(survivors.infantry * r),
+            cavalry: Math.floor(survivors.cavalry * r),
+            artillery: Math.floor(survivors.artillery * r),
+          };
           nations = {
             ...nations,
-            [arrival.ownerId]: {
-              ...refreshedAttacker,
-              troops:
-                refreshedAttacker.troops + Math.floor(survivors * 0.6),
-            },
+            [arrival.ownerId]: addCompositionsToNation(
+              refreshedAttacker,
+              fallback,
+            ),
           };
         }
-        // Skirmish always declares war if not already.
         if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
           nations = setMutualStance(
             nations,
@@ -343,7 +407,6 @@ function processMovements(input: {
         outcome = 'partial';
       }
     } else {
-      // Routed — losing attackers vanish.
       if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
         nations = setMutualStance(
           nations,
@@ -364,6 +427,8 @@ function processMovements(input: {
       countryId: destId,
       attackerLosses: result.attackerLosses,
       defenderLosses: result.defenderLosses,
+      totalAttackerLosses: result.totalAttackerLosses,
+      totalDefenderLosses: result.totalDefenderLosses,
       attackerWon: result.attackerWon,
       conquered,
       controlAfter: Math.round(controlAfter),
@@ -384,6 +449,7 @@ function processMovements(input: {
     ownership,
     nations,
     control,
+    contestedBy,
     lastBattleTick,
     movements: stillMoving,
     battles,
@@ -407,26 +473,51 @@ function applyAIAction(args: {
   let nations = args.nations;
   let movements = args.movements;
   const self = nations[selfId];
-  if (!self) return { nations, movements };
+  const country = countries[selfId];
+  if (!self || !country) return { nations, movements };
 
   switch (action.kind) {
     case 'idle':
       return { nations, movements };
     case 'recruit': {
-      const country = countries[selfId];
-      if (!country) return { nations, movements };
       const cap = maxTroops(country);
-      const wantBatch = 10;
-      const cost = wantBatch * recruitCost();
-      if (self.gold < cost) return { nations, movements };
-      const allowed = Math.min(wantBatch, cap - self.troops);
-      if (allowed <= 0) return { nations, movements };
+      const tot = totalTroops(self);
+      if (tot >= cap) return { nations, movements };
+      // AI buys a small batch in the personality's preferred mix.
+      const mix = action.mix ?? BALANCE_TROOPS.startingMix;
+      const want: Composition = {
+        infantry: 8 * mix.infantry,
+        cavalry: 8 * mix.cavalry,
+        artillery: 8 * mix.artillery,
+      };
+      let goldLeft = self.gold;
+      const additions: Composition = { infantry: 0, cavalry: 0, artillery: 0 };
+      for (const t of ['infantry', 'cavalry', 'artillery'] as const) {
+        const cost = recruitCost(t, country.specializations);
+        const wantN = Math.max(0, Math.round(want[t]));
+        for (let i = 0; i < wantN; i++) {
+          if (totalTroops(self) + additions.infantry + additions.cavalry + additions.artillery >= cap) break;
+          if (goldLeft < cost) break;
+          additions[t] += 1;
+          goldLeft -= cost;
+        }
+      }
+      if (
+        additions.infantry +
+          additions.cavalry +
+          additions.artillery ===
+        0
+      ) {
+        return { nations, movements };
+      }
       nations = {
         ...nations,
         [selfId]: {
           ...self,
-          gold: self.gold - allowed * recruitCost(),
-          troops: self.troops + allowed,
+          gold: goldLeft,
+          infantry: self.infantry + additions.infantry,
+          cavalry: self.cavalry + additions.cavalry,
+          artillery: self.artillery + additions.artillery,
         },
       };
       return { nations, movements };
@@ -439,7 +530,7 @@ function applyAIAction(args: {
         [selfId]: {
           ...self,
           gold: self.gold - cost,
-          tech: self.tech + techIncrement(self.tech),
+          tech: self.tech + techIncrement(self.tech, country.specializations),
         },
       };
       return { nations, movements };
@@ -447,15 +538,32 @@ function applyAIAction(args: {
     case 'dispatch': {
       const path = findPath(countries, action.fromId, action.toId);
       if (!path) return { nations, movements };
-      const garrison = Math.floor(
-        self.troops * BALANCE_MOVEMENT.homeGarrisonFraction,
-      );
-      const available = self.troops - garrison;
+      const tot = totalTroops(self);
+      const garrison = Math.floor(tot * BALANCE_MOVEMENT.homeGarrisonFraction);
+      const available = tot - garrison;
       const send = Math.min(action.troops, available);
       if (send <= 0) return { nations, movements };
+      // Send proportional to current composition.
+      const prop = available > 0 ? send / available : 0;
+      const sendInf = Math.floor((self.infantry - Math.floor(self.infantry * (garrison / Math.max(1, tot)))) * prop);
+      const sendCav = Math.floor((self.cavalry - Math.floor(self.cavalry * (garrison / Math.max(1, tot)))) * prop);
+      const sendArt = Math.floor((self.artillery - Math.floor(self.artillery * (garrison / Math.max(1, tot)))) * prop);
+      const composition: Composition = {
+        infantry: Math.max(0, sendInf),
+        cavalry: Math.max(0, sendCav),
+        artillery: Math.max(0, sendArt),
+      };
+      const total =
+        composition.infantry + composition.cavalry + composition.artillery;
+      if (total <= 0) return { nations, movements };
       nations = {
         ...nations,
-        [selfId]: { ...self, troops: self.troops - send },
+        [selfId]: {
+          ...self,
+          infantry: self.infantry - composition.infantry,
+          cavalry: self.cavalry - composition.cavalry,
+          artillery: self.artillery - composition.artillery,
+        },
       };
       movements = [
         ...movements,
@@ -464,7 +572,8 @@ function applyAIAction(args: {
           ownerId: selfId,
           fromId: action.fromId,
           toId: action.toId,
-          troops: send,
+          composition,
+          troops: total,
           path,
           pathIndex: 0,
           launchTick: tickCount,
@@ -513,15 +622,14 @@ export function runTick(input: TickInput): TickOutput {
   const date = advanceDate(input.date);
   const now = performance.now();
 
-  // 1) Economy & upkeep
   let nations = applyEconomy(input.countries, input.ownership, input.nations);
 
-  // 2) Movement & combat
   const moveStep = processMovements({
     countries: input.countries,
     ownership: input.ownership,
     nations,
     control: input.control,
+    contestedBy: input.contestedBy,
     lastBattleTick: input.lastBattleTick,
     movements: input.movements,
     tickCount: input.tickCount,
@@ -532,12 +640,18 @@ export function runTick(input: TickInput): TickOutput {
   let ownership = moveStep.ownership;
   let movements = moveStep.movements;
   let control = moveStep.control;
+  let contestedBy = moveStep.contestedBy;
   let lastBattleTick = moveStep.lastBattleTick;
 
-  // 2b) Control regeneration on quiet ground
-  control = regenerateControl(control, lastBattleTick, input.tickCount);
+  const regen = regenerateControl(
+    control,
+    contestedBy,
+    lastBattleTick,
+    input.tickCount,
+  );
+  control = regen.control;
+  contestedBy = regen.contestedBy;
 
-  // 3) AI thinking
   let brains = { ...input.brains };
   for (const [id, brain] of Object.entries(input.brains)) {
     if (input.playerCountryId && id === input.playerCountryId) continue;
@@ -571,7 +685,6 @@ export function runTick(input: TickInput): TickOutput {
     brains[id] = { ...advancedBrain, ticksSinceThink: 0 };
   }
 
-  // 4) Victory check
   let victory: VictoryState = { kind: 'ongoing' };
   if (input.playerCountryId && input.homeCountryId) {
     victory = evaluateVictory({
@@ -588,6 +701,7 @@ export function runTick(input: TickInput): TickOutput {
     ownership,
     nations,
     control,
+    contestedBy,
     lastBattleTick,
     brains,
     movements,

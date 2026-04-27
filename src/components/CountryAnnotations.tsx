@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { GeoProjection } from 'd3';
 import { useGameStore } from '../store/gameStore';
 import { BALANCE_CONTROL } from '../game/balance';
+import { totalTroops } from '../game/economy';
 
 type Props = {
   projection: GeoProjection;
@@ -71,7 +72,7 @@ export default function CountryAnnotations({ projection }: Props) {
         if (!country || !p) return null;
         const owner = ownership[id] ?? id;
         const ownerNation = nations[owner];
-        const troops = ownerNation?.troops ?? 0;
+        const troops = ownerNation ? totalTroops(ownerNation) : 0;
         const ctrl = control[id] ?? BALANCE_CONTROL.fullControl;
         const contested = ctrl < BALANCE_CONTROL.fullControl - 1;
         const fontSize = labelFontSize(country.geoArea);

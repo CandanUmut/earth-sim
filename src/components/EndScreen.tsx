@@ -31,7 +31,7 @@ export default function EndScreen() {
   }
 
   const biggestBattle = battles.reduce(
-    (max, b) => Math.max(max, b.attackerLosses + b.defenderLosses),
+    (max, b) => Math.max(max, b.totalAttackerLosses + b.totalDefenderLosses),
     0,
   );
 

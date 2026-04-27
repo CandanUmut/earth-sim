@@ -135,8 +135,12 @@ export default function BattleLog() {
                       marginTop: 2,
                     }}
                   >
-                    Atk losses {fmtNum(b.attackerLosses)} · Def losses{' '}
-                    {fmtNum(b.defenderLosses)}
+                    Atk −{fmtNum(b.totalAttackerLosses)}
+                    {' ('}
+                    {fmtNum(b.attackerLosses.infantry)}i ·{' '}
+                    {fmtNum(b.attackerLosses.cavalry)}c ·{' '}
+                    {fmtNum(b.attackerLosses.artillery)}a) · Def −
+                    {fmtNum(b.totalDefenderLosses)}
                   </div>
                 </div>
               );

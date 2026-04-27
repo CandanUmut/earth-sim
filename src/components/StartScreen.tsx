@@ -127,7 +127,7 @@ export default function StartScreen() {
                       }}
                     >
                       Start gold {Math.round(nation.gold)} · troops{' '}
-                      {nation.troops} (with player bonus)
+                      {nation.infantry + nation.cavalry + nation.artillery} (with player bonus)
                     </div>
                   </div>
                 </div>

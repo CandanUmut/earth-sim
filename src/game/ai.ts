@@ -1,5 +1,5 @@
 import type { Country } from './world';
-import type { Nation } from './economy';
+import { totalTroops, type Nation, type TroopType } from './economy';
 import { findPath } from './movement';
 import { BALANCE_AI, BALANCE_MOVEMENT } from './balance';
 
@@ -16,16 +16,24 @@ export type AIBrain = {
   ticksSinceThink: number;
 };
 
+/** Preferred recruit composition per personality (sums to 1). */
+export const DOCTRINE_MIX: Record<Personality, Record<TroopType, number>> = {
+  aggressive: { infantry: 0.45, cavalry: 0.45, artillery: 0.1 },
+  defensive: { infantry: 0.7, cavalry: 0.1, artillery: 0.2 },
+  opportunist: { infantry: 0.5, cavalry: 0.35, artillery: 0.15 },
+  isolationist: { infantry: 0.6, cavalry: 0.1, artillery: 0.3 },
+  merchant: { infantry: 0.65, cavalry: 0.15, artillery: 0.2 },
+};
+
 export type AIAction =
   | { kind: 'idle' }
-  | { kind: 'recruit' }
+  | { kind: 'recruit'; mix?: Record<TroopType, number> }
   | { kind: 'invest_tech' }
   | { kind: 'dispatch'; fromId: string; toId: string; troops: number }
   | { kind: 'declare_war'; targetId: string }
   | { kind: 'propose_peace'; targetId: string }
   | { kind: 'propose_alliance'; targetId: string };
 
-/** Sample a personality from the configured distribution using a uniform RNG. */
 export function samplePersonality(rng: () => number = Math.random): Personality {
   const dist = BALANCE_AI.personalityDistribution;
   const total =
@@ -62,28 +70,23 @@ type DecideContext = {
   rng: () => number;
 };
 
-/**
- * Pure decision function. Returns an action descriptor or `idle`. Does NOT
- * mutate any state — caller validates and applies.
- */
 export function decideAction(ctx: DecideContext): AIAction {
   const { selfId, countries, ownership, nations, brain, rng } = ctx;
   const country = countries[selfId];
   const nation = nations[selfId];
   if (!country || !nation) return { kind: 'idle' };
 
-  // Reachable enemy/neutral neighbors of MY OWNED territory.
+  const myTotal = totalTroops(nation);
+
   const myTerritories: string[] = [];
   for (const [tid, owner] of Object.entries(ownership)) {
     if (owner === selfId) myTerritories.push(tid);
   }
 
-  // Identify weakest reachable foreign neighbor.
   type Target = {
     id: string;
     fromId: string;
     troops: number;
-    population: number;
   };
   const candidates: Target[] = [];
   const seen = new Set<string>();
@@ -95,45 +98,39 @@ export function decideAction(ctx: DecideContext): AIAction {
       seen.add(nbr);
       const ownerOfNbr = ownership[nbr];
       if (!ownerOfNbr || ownerOfNbr === selfId) continue;
-      // Skip allies.
       if (nation.stance[ownerOfNbr] === 'allied') continue;
       const nbrNation = nations[ownerOfNbr];
-      const nbrCountry = countries[nbr];
-      if (!nbrNation || !nbrCountry) continue;
+      if (!nbrNation) continue;
       candidates.push({
         id: nbr,
         fromId: myId,
-        troops: nbrNation.troops,
-        population: nbrCountry.population,
+        troops: totalTroops(nbrNation),
       });
     }
   }
   candidates.sort((a, b) => a.troops - b.troops);
   const weakest = candidates[0];
 
-  // Strongest threat at war with me, for peace overtures.
   let warringStronger: { ownerId: string; troops: number } | null = null;
   for (const [otherId, stance] of Object.entries(nation.stance)) {
     if (stance !== 'war') continue;
     const otherNation = nations[otherId];
     if (!otherNation) continue;
-    if (otherNation.troops > nation.troops) {
-      if (!warringStronger || otherNation.troops > warringStronger.troops) {
-        warringStronger = { ownerId: otherId, troops: otherNation.troops };
+    const ot = totalTroops(otherNation);
+    if (ot > myTotal) {
+      if (!warringStronger || ot > warringStronger.troops) {
+        warringStronger = { ownerId: otherId, troops: ot };
       }
     }
   }
 
   const wantsAttack = (committedFraction: number, weakRatio: number) => {
     if (!weakest) return null;
-    if (weakest.troops > nation.troops * weakRatio) return null;
-    const garrison = Math.floor(
-      nation.troops * BALANCE_MOVEMENT.homeGarrisonFraction,
-    );
-    const available = nation.troops - garrison;
+    if (weakest.troops > myTotal * weakRatio) return null;
+    const garrison = Math.floor(myTotal * BALANCE_MOVEMENT.homeGarrisonFraction);
+    const available = myTotal - garrison;
     const commit = Math.floor(available * committedFraction);
     if (commit < 5) return null;
-    // Path must exist.
     const path = findPath(countries, weakest.fromId, weakest.id);
     if (!path) return null;
     return {
@@ -144,9 +141,10 @@ export function decideAction(ctx: DecideContext): AIAction {
     };
   };
 
-  const surplus = nation.gold - 50; // keep a small reserve
+  const surplus = nation.gold - 50;
   const canInvest = nation.gold >= 100;
   const canRecruit = nation.gold >= 50;
+  const mix = DOCTRINE_MIX[brain.personality];
 
   switch (brain.personality) {
     case 'aggressive': {
@@ -156,32 +154,35 @@ export function decideAction(ctx: DecideContext): AIAction {
       );
       if (attack) return attack;
       if (warringStronger && rng() < 0.15) {
-        return { kind: 'propose_alliance', targetId: pickFriendlyId(nations, selfId, warringStronger.ownerId, rng) ?? warringStronger.ownerId };
+        return {
+          kind: 'propose_alliance',
+          targetId:
+            pickFriendlyId(nations, selfId, warringStronger.ownerId, rng) ??
+            warringStronger.ownerId,
+        };
       }
-      if (canRecruit) return { kind: 'recruit' };
+      if (canRecruit) return { kind: 'recruit', mix };
       if (canInvest) return { kind: 'invest_tech' };
       return { kind: 'idle' };
     }
     case 'defensive': {
       if (warringStronger) {
-        // Try to make peace if losing.
-        if (nation.troops < warringStronger.troops * 0.7 && rng() < 0.5) {
+        if (myTotal < warringStronger.troops * 0.7 && rng() < 0.5) {
           return { kind: 'propose_peace', targetId: warringStronger.ownerId };
         }
-        if (canRecruit) return { kind: 'recruit' };
+        if (canRecruit) return { kind: 'recruit', mix };
       }
-      // Attack only obvious pushovers.
       const attack = wantsAttack(0.4, BALANCE_AI.weakNeighborRatio * 0.5);
       if (attack) return attack;
       if (canInvest && surplus > 200) return { kind: 'invest_tech' };
-      if (canRecruit) return { kind: 'recruit' };
+      if (canRecruit) return { kind: 'recruit', mix };
       return { kind: 'idle' };
     }
     case 'opportunist': {
       const attack = wantsAttack(0.6, BALANCE_AI.weakNeighborRatio);
       if (attack) return attack;
       if (canInvest && rng() < 0.5) return { kind: 'invest_tech' };
-      if (canRecruit) return { kind: 'recruit' };
+      if (canRecruit) return { kind: 'recruit', mix };
       return { kind: 'idle' };
     }
     case 'isolationist': {
@@ -191,15 +192,14 @@ export function decideAction(ctx: DecideContext): AIAction {
       if (canInvest && nation.gold >= BALANCE_AI.surplusGoldForInvest) {
         return { kind: 'invest_tech' };
       }
-      if (canRecruit) return { kind: 'recruit' };
+      if (canRecruit) return { kind: 'recruit', mix };
       return { kind: 'idle' };
     }
     case 'merchant': {
       if (canInvest && rng() < 0.7) return { kind: 'invest_tech' };
-      // Only attack a totally crushed neighbor.
       const attack = wantsAttack(0.3, 0.3);
       if (attack) return attack;
-      if (canRecruit) return { kind: 'recruit' };
+      if (canRecruit) return { kind: 'recruit', mix };
       return { kind: 'idle' };
     }
   }
@@ -221,7 +221,6 @@ function pickFriendlyId(
   return candidates[Math.floor(rng() * candidates.length)];
 }
 
-/** Should the target accept an alliance proposal from the proposer? */
 export function evaluateAllianceProposal(args: {
   proposerId: string;
   targetId: string;
@@ -234,8 +233,7 @@ export function evaluateAllianceProposal(args: {
   if (!target || !proposer) return false;
   if (target.stance[proposerId] === 'war') return false;
 
-  const strengthRatio =
-    proposer.troops / Math.max(1, target.troops);
+  const strengthRatio = totalTroops(proposer) / Math.max(1, totalTroops(target));
 
   switch (brain.personality) {
     case 'aggressive':
@@ -251,7 +249,6 @@ export function evaluateAllianceProposal(args: {
   }
 }
 
-/** Should the target accept a peace overture from the proposer? */
 export function evaluatePeaceProposal(args: {
   proposerId: string;
   targetId: string;
@@ -264,10 +261,10 @@ export function evaluatePeaceProposal(args: {
   if (!target || !proposer) return false;
   if (target.stance[proposerId] !== 'war') return true;
 
-  const strengthRatio = proposer.troops / Math.max(1, target.troops);
+  const strengthRatio = totalTroops(proposer) / Math.max(1, totalTroops(target));
   switch (brain.personality) {
     case 'aggressive':
-      return strengthRatio > 1.2; // peace only if losing
+      return strengthRatio > 1.2;
     case 'defensive':
       return strengthRatio > 0.5;
     case 'opportunist':
@@ -278,5 +275,3 @@ export function evaluatePeaceProposal(args: {
       return true;
   }
 }
-
-export const __test = { samplePersonality };

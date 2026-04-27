@@ -1,9 +1,5 @@
-import type { Country, Terrain } from './world';
+import type { Country, Specialization, Terrain } from './world';
 
-/**
- * Tiny LCG seeded RNG so tests can pin combat/AI outcomes. Returns numbers
- * in [0, 1). Not cryptographically anything, just stable-across-runs.
- */
 export function makeRng(seed: number): () => number {
   let s = seed >>> 0;
   if (s === 0) s = 1;
@@ -13,7 +9,9 @@ export function makeRng(seed: number): () => number {
   };
 }
 
-export function makeCountry(over: Partial<Country> & { id: string }): Country {
+export function makeCountry(
+  over: Partial<Country> & { id: string },
+): Country {
   return {
     id: over.id,
     name: over.name ?? over.id,
@@ -23,5 +21,6 @@ export function makeCountry(over: Partial<Country> & { id: string }): Country {
     baseEconomy: over.baseEconomy ?? 5,
     terrain: over.terrain ?? ('plains' as Terrain),
     geoArea: over.geoArea ?? 0.01,
+    specializations: over.specializations ?? ([] as Specialization[]),
   };
 }

@@ -7,8 +7,11 @@ import {
   techInvestmentCost,
   techIncrement,
   maxTroops,
+  totalTroops,
   type Nation,
   type Stance,
+  type TroopType,
+  type Composition,
 } from '../game/economy';
 import {
   runTick,
@@ -40,7 +43,6 @@ import {
 export type Speed = 1 | 2 | 3;
 
 export type GameState = {
-  // World data
   loaded: boolean;
   loading: boolean;
   error: string | null;
@@ -48,11 +50,11 @@ export type GameState = {
   countryOrder: string[];
   geo: FeatureCollection | null;
 
-  // Live state
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
   brains: Record<string, AIBrain>;
   control: Record<string, number>;
+  contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   battleLog: BattleLogEntry[];
@@ -60,7 +62,6 @@ export type GameState = {
   date: GameDate;
   tickCount: number;
 
-  // Player & controls
   playerCountryId: string | null;
   homeCountryId: string | null;
   paused: boolean;
@@ -68,14 +69,12 @@ export type GameState = {
   gameStarted: boolean;
   victory: VictoryState;
 
-  // UI state
   selectedCountryId: string | null;
   hoveredCountryId: string | null;
   battleLogOpen: boolean;
   dispatchTargetId: string | null;
   savedSummary: SaveSummary | null;
 
-  // Actions
   loadInitialWorld: () => Promise<void>;
   setSelected: (id: string | null) => void;
   setHovered: (id: string | null) => void;
@@ -83,12 +82,12 @@ export type GameState = {
   setPaused: (paused: boolean) => void;
   togglePaused: () => void;
   setSpeed: (speed: Speed) => void;
-  recruitTroops: (amount: number) => void;
+  recruit: (type: TroopType, amount: number) => void;
   investInTech: () => void;
   tick: () => void;
   openDispatch: (toId: string) => void;
   closeDispatch: () => void;
-  dispatchTroops: (toId: string, troops: number) => void;
+  dispatchTroops: (toId: string, composition: Composition) => void;
   declareWar: (targetId: string) => void;
   proposePeace: (targetId: string) => void;
   proposeAlliance: (targetId: string) => void;
@@ -141,6 +140,7 @@ const initialState = {
   nations: {} as Record<string, Nation>,
   brains: {} as Record<string, AIBrain>,
   control: {} as Record<string, number>,
+  contestedBy: {} as Record<string, string>,
   lastBattleTick: {} as Record<string, number>,
   movements: [] as TroopMovement[],
   battleLog: [] as BattleLogEntry[],
@@ -210,13 +210,17 @@ export const useGameStore = create<GameState>((set, get) => ({
     const baseline = nations[playerId];
     const country = countries[playerId];
     if (!baseline || !country) return;
+    const cap = maxTroops(country);
+    const totalNow = totalTroops(baseline);
+    const buffMul = BALANCE.playerTroopMultiplier;
+    const buffedTotal = Math.min(cap, Math.round(totalNow * buffMul));
+    const factor = totalNow > 0 ? buffedTotal / totalNow : 1;
     const buffed: Nation = {
       ...baseline,
       gold: baseline.gold * BALANCE.playerGoldMultiplier,
-      troops: Math.min(
-        maxTroops(country),
-        Math.round(baseline.troops * BALANCE.playerTroopMultiplier),
-      ),
+      infantry: Math.round(baseline.infantry * factor),
+      cavalry: Math.round(baseline.cavalry * factor),
+      artillery: Math.round(baseline.artillery * factor),
     };
     set({
       playerCountryId: playerId,
@@ -242,34 +246,38 @@ export const useGameStore = create<GameState>((set, get) => ({
     ensureTickInterval(get);
   },
 
-  recruitTroops: (amount) => {
+  recruit: (type, amount) => {
     const { playerCountryId, nations, countries } = get();
     if (!playerCountryId) return;
     const nation = nations[playerCountryId];
     const country = countries[playerCountryId];
     if (!nation || !country) return;
     const cap = maxTroops(country);
-    const allowed = Math.min(amount, cap - nation.troops);
+    const current = totalTroops(nation);
+    const room = cap - current;
+    if (room <= 0) return;
+    const cost = recruitCost(type, country.specializations);
+    const affordable = Math.floor(nation.gold / cost);
+    const allowed = Math.min(amount, room, affordable);
     if (allowed <= 0) return;
-    const realCost = allowed * recruitCost();
-    if (nation.gold < realCost) return;
     set({
       nations: {
         ...nations,
         [playerCountryId]: {
           ...nation,
-          gold: nation.gold - realCost,
-          troops: nation.troops + allowed,
+          gold: nation.gold - allowed * cost,
+          [type]: nation[type] + allowed,
         },
       },
     });
   },
 
   investInTech: () => {
-    const { playerCountryId, nations } = get();
+    const { playerCountryId, nations, countries } = get();
     if (!playerCountryId) return;
     const nation = nations[playerCountryId];
-    if (!nation) return;
+    const country = countries[playerCountryId];
+    if (!nation || !country) return;
     const cost = techInvestmentCost();
     if (nation.gold < cost) return;
     set({
@@ -278,7 +286,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         [playerCountryId]: {
           ...nation,
           gold: nation.gold - cost,
-          tech: nation.tech + techIncrement(nation.tech),
+          tech: nation.tech + techIncrement(nation.tech, country.specializations),
         },
       },
     });
@@ -294,6 +302,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       nations: s.nations,
       brains: s.brains,
       control: s.control,
+      contestedBy: s.contestedBy,
       lastBattleTick: s.lastBattleTick,
       movements: s.movements,
       playerCountryId: s.playerCountryId,
@@ -307,7 +316,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       ...result.newArrivals,
     ].filter((t) => now - t.arrivedAt < BALANCE_MOVEMENT.arrivalTrailMs);
 
-    const battleLog = [...result.newBattles, ...s.battleLog].slice(0, 20);
+    const battleLog = [...result.newBattles, ...s.battleLog].slice(0, 30);
 
     set({
       date: result.date,
@@ -316,6 +325,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       nations: result.nations,
       brains: result.brains,
       control: result.control,
+      contestedBy: result.contestedBy,
       lastBattleTick: result.lastBattleTick,
       movements: result.movements,
       battleLog,
@@ -328,24 +338,24 @@ export const useGameStore = create<GameState>((set, get) => ({
       clearSave();
       set({ savedSummary: null });
     } else if ((s.tickCount + 1) % 10 === 0) {
-      // Auto-save every 10 ticks.
-      const now = get();
+      const now2 = get();
       writeSave({
-        version: 1,
+        version: 2,
         savedAt: Date.now(),
-        ownership: now.ownership,
-        nations: now.nations,
-        brains: now.brains,
-        control: now.control,
-        lastBattleTick: now.lastBattleTick,
-        movements: now.movements,
-        battleLog: now.battleLog,
-        date: now.date,
-        tickCount: now.tickCount,
-        playerCountryId: now.playerCountryId,
-        homeCountryId: now.homeCountryId,
-        speed: now.speed,
-        victory: now.victory,
+        ownership: now2.ownership,
+        nations: now2.nations,
+        brains: now2.brains,
+        control: now2.control,
+        contestedBy: now2.contestedBy,
+        lastBattleTick: now2.lastBattleTick,
+        movements: now2.movements,
+        battleLog: now2.battleLog,
+        date: now2.date,
+        tickCount: now2.tickCount,
+        playerCountryId: now2.playerCountryId,
+        homeCountryId: now2.homeCountryId,
+        speed: now2.speed,
+        victory: now2.victory,
       });
       set({ savedSummary: summarizeSave() });
     }
@@ -354,7 +364,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   openDispatch: (toId) => set({ dispatchTargetId: toId }),
   closeDispatch: () => set({ dispatchTargetId: null }),
 
-  dispatchTroops: (toId, troops) => {
+  dispatchTroops: (toId, composition) => {
     const {
       playerCountryId,
       countries,
@@ -379,18 +389,40 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     }
     if (!bestPath || !bestFromId) return;
-    const garrison = Math.floor(
-      player.troops * BALANCE_MOVEMENT.homeGarrisonFraction,
+    const garrisonInf = Math.floor(
+      player.infantry * BALANCE_MOVEMENT.homeGarrisonFraction,
     );
-    const available = player.troops - garrison;
-    const send = Math.min(troops, Math.max(0, available));
-    if (send <= 0) return;
+    const garrisonCav = Math.floor(
+      player.cavalry * BALANCE_MOVEMENT.homeGarrisonFraction,
+    );
+    const garrisonArt = Math.floor(
+      player.artillery * BALANCE_MOVEMENT.homeGarrisonFraction,
+    );
+    const sendInf = Math.max(
+      0,
+      Math.min(composition.infantry, player.infantry - garrisonInf),
+    );
+    const sendCav = Math.max(
+      0,
+      Math.min(composition.cavalry, player.cavalry - garrisonCav),
+    );
+    const sendArt = Math.max(
+      0,
+      Math.min(composition.artillery, player.artillery - garrisonArt),
+    );
+    const total = sendInf + sendCav + sendArt;
+    if (total <= 0) return;
     const newMv: TroopMovement = {
       id: newMovementId(),
       ownerId: playerCountryId,
       fromId: bestFromId,
       toId,
-      troops: send,
+      composition: {
+        infantry: sendInf,
+        cavalry: sendCav,
+        artillery: sendArt,
+      },
+      troops: total,
       path: bestPath,
       pathIndex: 0,
       launchTick: tickCount,
@@ -398,7 +430,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({
       nations: {
         ...nations,
-        [playerCountryId]: { ...player, troops: player.troops - send },
+        [playerCountryId]: {
+          ...player,
+          infantry: player.infantry - sendInf,
+          cavalry: player.cavalry - sendCav,
+          artillery: player.artillery - sendArt,
+        },
       },
       movements: [...movements, newMv],
       dispatchTargetId: null,
@@ -516,6 +553,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       nations: save.nations,
       brains: save.brains,
       control: save.control,
+      contestedBy: save.contestedBy ?? {},
       lastBattleTick: save.lastBattleTick,
       movements: save.movements,
       battleLog: save.battleLog,
@@ -537,12 +575,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     const s = get();
     if (!s.gameStarted || !s.playerCountryId) return;
     writeSave({
-      version: 1,
+      version: 2,
       savedAt: Date.now(),
       ownership: s.ownership,
       nations: s.nations,
       brains: s.brains,
       control: s.control,
+      contestedBy: s.contestedBy,
       lastBattleTick: s.lastBattleTick,
       movements: s.movements,
       battleLog: s.battleLog,

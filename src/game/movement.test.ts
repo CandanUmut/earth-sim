@@ -50,6 +50,7 @@ describe('advanceMovement / hasArrived', () => {
     ownerId: 'A',
     fromId: 'A',
     toId: 'C',
+    composition: { infantry: 40, cavalry: 8, artillery: 2 },
     troops: 50,
     path: ['A', 'B', 'C'],
     pathIndex: 0,

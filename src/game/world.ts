@@ -3,6 +3,32 @@ import type { Feature, FeatureCollection, Geometry, Position } from 'geojson';
 
 export type Terrain = 'plains' | 'mountain' | 'island' | 'desert' | 'forest';
 
+export type Specialization =
+  | 'mercantile'
+  | 'martial'
+  | 'fortified'
+  | 'horseBreeders'
+  | 'industrial'
+  | 'scholarly';
+
+export const SPEC_LABELS: Record<Specialization, string> = {
+  mercantile: 'Mercantile',
+  martial: 'Martial',
+  fortified: 'Fortified',
+  horseBreeders: 'Horse Breeders',
+  industrial: 'Industrial',
+  scholarly: 'Scholarly',
+};
+
+export const SPEC_DESCRIPTIONS: Record<Specialization, string> = {
+  mercantile: '+25 % gold income',
+  martial: '+25 % troop cap',
+  fortified: '+20 % defense bonus',
+  horseBreeders: '−5 g per cavalry recruited',
+  industrial: '−10 g per artillery recruited',
+  scholarly: '+50 % tech investment ROI',
+};
+
 export type Country = {
   id: string;
   name: string;
@@ -13,6 +39,8 @@ export type Country = {
   terrain: Terrain;
   /** Surface area in steradians (Mercator-independent). Used to size labels. */
   geoArea: number;
+  /** 0–2 specializations assigned at world load, modify economy/combat. */
+  specializations: Specialization[];
 };
 
 export type CountryFeature = Feature<Geometry, Record<string, unknown>>;
@@ -170,6 +198,7 @@ export async function loadWorld(): Promise<WorldData> {
   const countries: Country[] = features.map((feature) => {
     const id = featureId(feature);
     const centroid = geoCentroid(feature) as [number, number];
+    const terrain = inferTerrain(feature, centroid);
     return {
       id,
       name: featureName(feature),
@@ -177,8 +206,9 @@ export async function loadWorld(): Promise<WorldData> {
       neighbors: Array.from(adj.get(id) ?? []),
       population: Math.round(featurePopulation(feature)),
       baseEconomy: featureBaseEconomy(feature),
-      terrain: inferTerrain(feature, centroid),
+      terrain,
       geoArea: geoArea(feature),
+      specializations: assignSpecializations(terrain, id),
     };
   });
 
@@ -189,6 +219,59 @@ export async function loadWorld(): Promise<WorldData> {
 
   cachedWorld = { countries, geo };
   return cachedWorld;
+}
+
+/**
+ * Deterministic specialization assignment. Each country gets 0-2 traits,
+ * weighted by its terrain so the geography flavors gameplay (steppe-like
+ * countries breed cavalry; mountains fortify; islands trade).
+ */
+function assignSpecializations(terrain: Terrain, id: string): Specialization[] {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const r1 = ((h >>> 0) % 1000) / 1000;
+  const r2 = (((h >>> 11) >>> 0) % 1000) / 1000;
+  const r3 = (((h >>> 17) >>> 0) % 1000) / 1000;
+
+  const pickByTerrain = (roll: number): Specialization | null => {
+    switch (terrain) {
+      case 'plains':
+        if (roll < 0.35) return 'horseBreeders';
+        if (roll < 0.65) return 'mercantile';
+        if (roll < 0.85) return 'industrial';
+        return null;
+      case 'mountain':
+        if (roll < 0.5) return 'fortified';
+        if (roll < 0.8) return 'scholarly';
+        return null;
+      case 'island':
+        if (roll < 0.6) return 'mercantile';
+        if (roll < 0.8) return 'scholarly';
+        return null;
+      case 'desert':
+        if (roll < 0.45) return 'martial';
+        if (roll < 0.75) return 'mercantile';
+        return null;
+      case 'forest':
+        if (roll < 0.35) return 'scholarly';
+        if (roll < 0.65) return 'fortified';
+        if (roll < 0.85) return 'horseBreeders';
+        return null;
+    }
+  };
+
+  const specs: Specialization[] = [];
+  const first = pickByTerrain(r1);
+  if (first) specs.push(first);
+  // 22 % chance of a second, distinct specialization.
+  if (r2 < 0.22) {
+    const second = pickByTerrain(r3);
+    if (second && !specs.includes(second)) specs.push(second);
+  }
+  return specs;
 }
 
 /** Deterministic muted paper-palette color hashed from a country id. */

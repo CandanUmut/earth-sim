@@ -1,10 +1,13 @@
-import { Coins, Users, Sparkles } from 'lucide-react';
+import { Coins, Sparkles, Shield, Wind, Crosshair } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
-import { countryFill } from '../game/world';
+import { countryFill, SPEC_LABELS } from '../game/world';
 import {
   maxTroops,
   recruitCost,
   techInvestmentCost,
+  totalTroops,
+  TROOP_LABELS,
+  type TroopType,
 } from '../game/economy';
 
 function fmtNum(n: number): string {
@@ -12,6 +15,12 @@ function fmtNum(n: number): string {
   if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
   return Math.round(n).toLocaleString();
 }
+
+const TROOP_ICONS: Record<TroopType, React.ReactNode> = {
+  infantry: <Shield size={12} />,
+  cavalry: <Wind size={12} />,
+  artillery: <Crosshair size={12} />,
+};
 
 export default function PlayerHUD() {
   const playerId = useGameStore((s) => s.playerCountryId);
@@ -21,16 +30,13 @@ export default function PlayerHUD() {
   const nation = useGameStore((s) =>
     s.playerCountryId ? s.nations[s.playerCountryId] : null,
   );
-  const recruit = useGameStore((s) => s.recruitTroops);
+  const recruit = useGameStore((s) => s.recruit);
   const invest = useGameStore((s) => s.investInTech);
 
   if (!playerId || !country || !nation) return null;
 
   const cap = maxTroops(country);
-  const recruitCount = 10;
-  const canRecruit =
-    nation.gold >= recruitCount * recruitCost() && nation.troops < cap;
-  const canInvest = nation.gold >= techInvestmentCost();
+  const total = totalTroops(nation);
 
   return (
     <aside
@@ -38,7 +44,7 @@ export default function PlayerHUD() {
       style={{
         top: 64,
         left: 16,
-        width: 280,
+        width: 290,
         background: 'var(--paper)',
         border: '1px solid var(--ink)',
         boxShadow: '0 4px 14px var(--paper-shadow), 0 1px 2px var(--paper-shadow)',
@@ -90,113 +96,141 @@ export default function PlayerHUD() {
         </div>
       </div>
 
-      <Stat
-        icon={<Coins size={14} />}
-        label="Gold"
-        value={fmtNum(nation.gold)}
-      />
-      <Stat
-        icon={<Users size={14} />}
-        label="Troops"
-        value={`${fmtNum(nation.troops)} / ${fmtNum(cap)}`}
-      />
-      <Stat
-        icon={<Sparkles size={14} />}
-        label="Tech"
-        value={nation.tech.toFixed(2)}
-      />
-
-      <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-        <ActionButton
-          label={`+${recruitCount} Troops`}
-          sub={`${recruitCount * recruitCost()}g`}
-          enabled={canRecruit}
-          onClick={() => recruit(recruitCount)}
-        />
-        <ActionButton
-          label="Invest Tech"
-          sub={`${techInvestmentCost()}g`}
-          enabled={canInvest}
-          onClick={invest}
-        />
-      </div>
-    </aside>
-  );
-}
-
-function Stat({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div
-      className="flex items-center justify-between"
-      style={{ padding: '4px 0' }}
-    >
-      <div
-        className="flex items-center gap-2"
-        style={{ color: 'var(--ink-faded)' }}
-      >
-        {icon}
-        <span
-          style={{
-            fontSize: 11,
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-          }}
-        >
-          {label}
+      <div className="flex items-center justify-between" style={{ padding: '4px 0' }}>
+        <div className="flex items-center gap-2" style={{ color: 'var(--ink-faded)' }}>
+          <Coins size={14} />
+          <span style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            Gold
+          </span>
+        </div>
+        <span className="num" style={{ fontSize: 14 }}>
+          {fmtNum(nation.gold)}
         </span>
       </div>
-      <span className="num" style={{ fontSize: 14 }}>
-        {value}
-      </span>
-    </div>
-  );
-}
 
-function ActionButton({
-  label,
-  sub,
-  enabled,
-  onClick,
-}: {
-  label: string;
-  sub: string;
-  enabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={!enabled}
-      onClick={onClick}
-      style={{
-        flex: 1,
-        background: enabled ? 'var(--paper)' : 'transparent',
-        color: enabled ? 'var(--ink)' : 'var(--ink-faded)',
-        border: '1px solid var(--ink)',
-        padding: '8px 4px',
-        fontFamily: '"Crimson Pro", serif',
-        fontSize: 13,
-        cursor: enabled ? 'pointer' : 'not-allowed',
-        opacity: enabled ? 1 : 0.5,
-        transition: 'background 150ms ease',
-        lineHeight: 1.1,
-      }}
-    >
-      <div>{label}</div>
-      <div
-        className="num"
-        style={{ fontSize: 10, marginTop: 2, color: 'var(--ink-faded)' }}
-      >
-        {sub}
+      <div className="flex items-center justify-between" style={{ padding: '4px 0 8px' }}>
+        <div className="flex items-center gap-2" style={{ color: 'var(--ink-faded)' }}>
+          <Sparkles size={14} />
+          <span style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            Tech
+          </span>
+        </div>
+        <span className="num" style={{ fontSize: 14 }}>
+          {nation.tech.toFixed(2)}
+        </span>
       </div>
-    </button>
+
+      <div
+        style={{
+          fontSize: 10,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: 'var(--ink-faded)',
+          marginTop: 6,
+          marginBottom: 4,
+        }}
+      >
+        Army · {fmtNum(total)} / {fmtNum(cap)}
+      </div>
+
+      {(['infantry', 'cavalry', 'artillery'] as const).map((type) => {
+        const cost = recruitCost(type, country.specializations);
+        const canRecruit = nation.gold >= cost && total < cap;
+        return (
+          <div
+            key={type}
+            className="flex items-center gap-2"
+            style={{ padding: '3px 0' }}
+          >
+            <div
+              style={{
+                color: canRecruit ? 'var(--ink)' : 'var(--ink-faded)',
+                width: 16,
+              }}
+            >
+              {TROOP_ICONS[type]}
+            </div>
+            <div style={{ flex: 1, fontSize: 12 }}>
+              <span style={{ fontWeight: 500 }}>{TROOP_LABELS[type]}</span>
+              <span className="num" style={{ marginLeft: 6, color: 'var(--ink-faded)' }}>
+                {fmtNum(nation[type])}
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={!canRecruit}
+              onClick={() => recruit(type, 5)}
+              title={`+5 ${TROOP_LABELS[type]} for ${5 * cost}g`}
+              style={{
+                background: canRecruit ? 'var(--paper)' : 'transparent',
+                color: canRecruit ? 'var(--ink)' : 'var(--ink-faded)',
+                border: `1px solid ${canRecruit ? 'var(--ink)' : 'var(--ink-faded)'}`,
+                padding: '3px 8px',
+                fontFamily: '"JetBrains Mono", monospace',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: canRecruit ? 'pointer' : 'not-allowed',
+                opacity: canRecruit ? 1 : 0.5,
+              }}
+            >
+              +5 ({cost * 5}g)
+            </button>
+          </div>
+        );
+      })}
+
+      <button
+        type="button"
+        disabled={nation.gold < techInvestmentCost()}
+        onClick={invest}
+        style={{
+          width: '100%',
+          marginTop: 10,
+          background:
+            nation.gold >= techInvestmentCost() ? 'var(--paper)' : 'transparent',
+          color: nation.gold >= techInvestmentCost() ? 'var(--ink)' : 'var(--ink-faded)',
+          border: '1px solid var(--ink)',
+          padding: '6px',
+          fontFamily: '"Crimson Pro", serif',
+          fontSize: 12,
+          cursor: nation.gold >= techInvestmentCost() ? 'pointer' : 'not-allowed',
+          opacity: nation.gold >= techInvestmentCost() ? 1 : 0.5,
+        }}
+      >
+        Invest in Tech ({techInvestmentCost()}g)
+      </button>
+
+      {country.specializations.length > 0 && (
+        <div
+          style={{
+            marginTop: 10,
+            paddingTop: 8,
+            borderTop: '1px dashed var(--ink-faded)',
+            fontSize: 11,
+            color: 'var(--ink-faded)',
+            fontStyle: 'italic',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+          }}
+        >
+          {country.specializations.map((s) => (
+            <span
+              key={s}
+              style={{
+                color: 'var(--ink)',
+                fontStyle: 'normal',
+                padding: '1px 6px',
+                border: '1px solid var(--ink-faded)',
+                fontSize: 10,
+                letterSpacing: '0.04em',
+              }}
+            >
+              {SPEC_LABELS[s]}
+            </span>
+          ))}
+        </div>
+      )}
+    </aside>
   );
 }

@@ -1,16 +1,17 @@
 import type { Country } from './world';
+import type { Composition } from './economy';
 
 export type TroopMovement = {
   id: string;
   ownerId: string;
   fromId: string;
   toId: string;
+  /** Per-type composition of the marching column. */
+  composition: Composition;
+  /** Sum of the composition, cached for cheap rendering. */
   troops: number;
-  /** Full path of country ids from origin to destination, inclusive. */
   path: string[];
-  /** Index of the country the column is currently *in*. Starts at 0. */
   pathIndex: number;
-  /** Tick the movement was launched on (for arrival animations). */
   launchTick: number;
 };
 
@@ -20,10 +21,6 @@ export function newMovementId(): string {
   return `mv-${movementCounter}-${Date.now().toString(36)}`;
 }
 
-/**
- * Breadth-first search over the country adjacency graph. Returns the shortest
- * path (inclusive of both endpoints) or null if unreachable.
- */
 export function findPath(
   countries: Record<string, Country>,
   fromId: string,
@@ -59,22 +56,16 @@ export function findPath(
   return null;
 }
 
-/**
- * One-tick step through a movement. Returns the next state of the column,
- * or null if it has arrived at its destination this tick.
- */
 export function advanceMovement(mv: TroopMovement): TroopMovement | null {
   const nextIndex = mv.pathIndex + 1;
   if (nextIndex >= mv.path.length) return null;
   return { ...mv, pathIndex: nextIndex };
 }
 
-/** Has the movement reached its final destination? */
 export function hasArrived(mv: TroopMovement): boolean {
   return mv.pathIndex >= mv.path.length - 1;
 }
 
-/** Country id where the column currently sits. */
 export function currentLocation(mv: TroopMovement): string {
   return mv.path[mv.pathIndex];
 }

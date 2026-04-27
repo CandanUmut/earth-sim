@@ -4,16 +4,17 @@ import type { TroopMovement } from '../game/movement';
 import type { AIBrain } from '../game/ai';
 import type { VictoryState } from '../game/victory';
 
-const SAVE_KEY = 'terra-bellum-save-v1';
+const SAVE_KEY = 'terra-bellum-save-v2';
 const TUTORIAL_KEY = 'terra-bellum-tutorial-seen-v1';
 
 export type SavePayload = {
-  version: 1;
+  version: 2;
   savedAt: number;
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
   brains: Record<string, AIBrain>;
   control: Record<string, number>;
+  contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   battleLog: BattleLogEntry[];
@@ -37,7 +38,7 @@ export function writeSave(payload: SavePayload): void {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
   } catch {
-    // Quota or private mode — silently ignore. Persistence is best-effort.
+    // Quota or private mode — silently ignore.
   }
 }
 
@@ -46,7 +47,7 @@ export function readSave(): SavePayload | null {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SavePayload;
-    if (parsed.version !== 1) return null;
+    if (parsed.version !== 2) return null;
     return parsed;
   } catch {
     return null;
@@ -56,6 +57,8 @@ export function readSave(): SavePayload | null {
 export function clearSave(): void {
   try {
     localStorage.removeItem(SAVE_KEY);
+    // Also wipe the v1 key so old saves don't linger.
+    localStorage.removeItem('terra-bellum-save-v1');
   } catch {
     // ignore
   }
@@ -84,7 +87,7 @@ export function hasSeenTutorial(): boolean {
   try {
     return localStorage.getItem(TUTORIAL_KEY) === 'yes';
   } catch {
-    return true; // Don't badger users when storage is unavailable.
+    return true;
   }
 }
 

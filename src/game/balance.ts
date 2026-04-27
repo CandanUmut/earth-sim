@@ -1,7 +1,5 @@
 /**
- * Single source of truth for tunable game constants. Phase 4 will lean on
- * this for balance passes — keeping it as a flat object so it's trivial to
- * load/dump for tuning experiments.
+ * Single source of truth for tunable game constants.
  */
 export const BALANCE = {
   // Time
@@ -18,13 +16,9 @@ export const BALANCE = {
   playerTroopMultiplier: 1.5,
 
   // Economy
-  goldPerTickFormula: 'baseEconomy * tech * (1 + ownedTerritories * 0.1)',
   territoryEconomyBonus: 0.1,
   troopUpkeepRate: 0.05, // gold per troop per tick
   maxTroopsPerPopulation: 0.02,
-
-  // Recruitment
-  goldPerTroopRecruited: 10,
 
   // Tech investment
   techInvestmentCost: 100,
@@ -32,15 +26,39 @@ export const BALANCE = {
   techDiminishingExponent: 0.7,
 } as const;
 
+export const BALANCE_TROOPS = {
+  /** Recruit cost in gold per unit. */
+  cost: {
+    infantry: 8,
+    cavalry: 18,
+    artillery: 32,
+  },
+  /** How much each unit type contributes per its base efficacy. */
+  baseDamage: {
+    infantry: 1.0,
+    cavalry: 1.25,
+    artillery: 1.5,
+  },
+  /** Rock-paper-scissors modifier — attacker[type] vs defender[type]. */
+  rps: {
+    infantry: { infantry: 1.0, cavalry: 0.8, artillery: 1.25 },
+    cavalry: { infantry: 1.25, cavalry: 1.0, artillery: 0.8 },
+    artillery: { infantry: 0.8, cavalry: 1.25, artillery: 1.0 },
+  },
+  /** Starting composition fractions for AI/auto-build nations. */
+  startingMix: {
+    infantry: 0.7,
+    cavalry: 0.25,
+    artillery: 0.05,
+  },
+} as const;
+
 export const BALANCE_MOVEMENT = {
-  /** Fraction of troops that must remain at home as garrison. */
   homeGarrisonFraction: 0.1,
-  /** How long an arrival ghost trail lingers after the column lands (ms). */
   arrivalTrailMs: 3000,
 } as const;
 
 export const BALANCE_AI = {
-  // Distribution must sum to 100.
   personalityDistribution: {
     aggressive: 25,
     defensive: 25,
@@ -48,16 +66,11 @@ export const BALANCE_AI = {
     isolationist: 15,
     merchant: 10,
   },
-  /** Min/max ticks between AI thoughts (chosen per nation). */
   thinkCadenceMin: 3,
   thinkCadenceMax: 8,
-  /** Attack threshold: target troops < this fraction of mine to be tempting. */
   weakNeighborRatio: 0.6,
-  /** Fraction of own troops committed to an AI attack. */
   attackCommitFraction: 0.7,
-  /** Defensive AI requires this much surplus gold to invest. */
   surplusGoldForInvest: 200,
-  /** Aggressive AI alliance interest threshold. */
   allianceAcceptStrengthRatio: 0.6,
 } as const;
 
@@ -66,13 +79,19 @@ export const BALANCE_VICTORY = {
 } as const;
 
 export const BALANCE_CONTROL = {
-  /** Starting control all countries possess over their own territory. */
   fullControl: 100,
-  /** Control points lost per won attack — randomized between min and max. */
   damagePerVictoryMin: 35,
   damagePerVictoryMax: 70,
-  /** Control regenerated per tick when not under attack (ticks since last battle). */
   regenPerTick: 2,
-  /** Ticks of grace before regen kicks in. */
   regenGraceTicks: 6,
+} as const;
+
+/** Specialization-driven multipliers and discounts. */
+export const BALANCE_SPECS = {
+  mercantile: { goldMul: 1.25 },
+  martial: { troopCapMul: 1.25 },
+  fortified: { extraDefenseBonus: 0.2 },
+  horseBreeders: { cavalryDiscount: 5 },
+  industrial: { artilleryDiscount: 10 },
+  scholarly: { techRoiMul: 1.5 },
 } as const;

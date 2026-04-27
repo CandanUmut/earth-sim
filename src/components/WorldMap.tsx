@@ -43,6 +43,8 @@ export default function WorldMap() {
   const movements = useGameStore((s) => s.movements);
   const arrivalTrails = useGameStore((s) => s.arrivalTrails);
   const countries = useGameStore((s) => s.countries);
+  const control = useGameStore((s) => s.control);
+  const contestedBy = useGameStore((s) => s.contestedBy);
   const setSelected = useGameStore((s) => s.setSelected);
   const setHovered = useGameStore((s) => s.setHovered);
   const selectedId = useGameStore((s) => s.selectedCountryId);
@@ -61,21 +63,50 @@ export default function WorldMap() {
     return { projection, path };
   }, [geo, w, h]);
 
+  // Pan/zoom binding. Re-bind when viewport size changes so extents stay
+  // sane. Wheel events on Windows trackpads emit huge deltaY values; we
+  // explicitly normalize to keep zoom step predictable.
   useEffect(() => {
     if (!svgRef.current || !gRef.current) return;
-    const svg = d3.select(svgRef.current);
-    const g = d3.select(gRef.current);
+    const svgEl = svgRef.current;
+    const sel = d3.select(svgEl);
+    const gSel = d3.select(gRef.current);
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([1, 8])
+      .scaleExtent([0.6, 12])
+      .extent([
+        [0, 0],
+        [w, h],
+      ])
+      .filter((event) => {
+        // Allow wheel always (no ctrl required); allow primary mouse drag.
+        if (event.type === 'wheel') return true;
+        if (event.type === 'mousedown' || event.type === 'pointerdown')
+          return event.button === 0;
+        return !event.ctrlKey && !event.button;
+      })
+      .wheelDelta((event: WheelEvent) => {
+        // d3's default normalizes by deltaMode; this is the recommended pattern.
+        return -event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002);
+      })
       .on('zoom', (event) => {
-        g.attr('transform', event.transform.toString());
+        gSel.attr('transform', event.transform.toString());
       });
-    svg.call(zoom);
+    sel.call(zoom);
+    // Cursor feedback so users know it's grabbable.
+    svgEl.style.cursor = 'grab';
+    sel.on('mousedown.cursor', () => {
+      svgEl.style.cursor = 'grabbing';
+    });
+    sel.on('mouseup.cursor', () => {
+      svgEl.style.cursor = 'grab';
+    });
     return () => {
-      svg.on('.zoom', null);
+      sel.on('.zoom', null);
+      sel.on('mousedown.cursor', null);
+      sel.on('mouseup.cursor', null);
     };
-  }, []);
+  }, [w, h]);
 
   // Per-country fill + stripe overlay updates on ownership / stance / player change.
   useEffect(() => {
@@ -89,7 +120,23 @@ export default function WorldMap() {
       let stance: StanceClass = null;
       if (playerId && owner === playerId) stance = 'self';
       else if (playerId && playerStance[owner]) stance = playerStance[owner];
-      el.setAttribute('fill', blendStance(base, stance));
+      const stanceTinted = blendStance(base, stance);
+
+      // If contested, blend toward the attacker's color proportional to loss.
+      const attackerId = contestedBy[id];
+      const ctrl = control[id] ?? 100;
+      if (attackerId && ctrl < 100) {
+        const attackerBase = countryFill(attackerId);
+        const lostFrac = Math.max(0, Math.min(1, (100 - ctrl) / 100));
+        // Use color-mix for the gradient blend toward attacker's color.
+        const pct = Math.round(lostFrac * 60); // up to 60 % toward attacker before fall
+        el.setAttribute(
+          'fill',
+          `color-mix(in srgb, ${stanceTinted} ${100 - pct}%, ${attackerBase} ${pct}%)`,
+        );
+      } else {
+        el.setAttribute('fill', stanceTinted);
+      }
     });
     // Stripe overlays
     const stripes = gRef.current.querySelectorAll<SVGPathElement>(
@@ -116,7 +163,7 @@ export default function WorldMap() {
         el.setAttribute('opacity', '0');
       }
     });
-  }, [ownership, nations, playerId]);
+  }, [ownership, nations, playerId, control, contestedBy]);
 
   useEffect(() => {
     if (!gRef.current) return;

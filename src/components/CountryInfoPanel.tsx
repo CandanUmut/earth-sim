@@ -2,7 +2,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { X, Swords, Handshake, ScrollText, Coins, Send } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
 import type { Country, Terrain } from '../game/world';
-import type { Nation, Stance } from '../game/economy';
+import { SPEC_LABELS, SPEC_DESCRIPTIONS } from '../game/world';
+import { totalTroops, type Nation, type Stance } from '../game/economy';
 
 const terrainLabels: Record<Terrain, string> = {
   plains: 'Plains',
@@ -212,7 +213,12 @@ export default function CountryInfoPanel() {
           )}
           {nation && (
             <>
-              <Stat label="Troops" value={fmtNum(nation.troops)} mono />
+              <Stat label="Troops" value={fmtNum(totalTroops(nation))} mono />
+              <Stat
+                label="↳ Composition"
+                value={`${fmtNum(nation.infantry)}i · ${fmtNum(nation.cavalry)}c · ${fmtNum(nation.artillery)}a`}
+                mono
+              />
               {showGold ? (
                 <Stat label="Gold" value={fmtNum(nation.gold)} mono />
               ) : (
@@ -220,6 +226,49 @@ export default function CountryInfoPanel() {
               )}
               <Stat label="Tech" value={nation.tech.toFixed(2)} mono />
             </>
+          )}
+
+          {country.specializations.length > 0 && (
+            <div
+              style={{
+                marginTop: 12,
+                paddingTop: 10,
+                borderTop: '1px solid var(--ink-faded)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--ink-faded)',
+                  marginBottom: 6,
+                }}
+              >
+                Traits
+              </div>
+              {country.specializations.map((spec) => (
+                <div
+                  key={spec}
+                  style={{
+                    fontSize: 12,
+                    marginBottom: 3,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>{SPEC_LABELS[spec]}</span>
+                  <span
+                    style={{
+                      color: 'var(--ink-faded)',
+                      fontStyle: 'italic',
+                    }}
+                  >
+                    {SPEC_DESCRIPTIONS[spec]}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
 
           {gameStarted && playerId && !playerOwnsThis && ownerId && (

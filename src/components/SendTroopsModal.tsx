@@ -3,6 +3,17 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { findPath } from '../game/movement';
 import { BALANCE_MOVEMENT } from '../game/balance';
+import {
+  totalTroops,
+  TROOP_LABELS,
+  type Composition,
+} from '../game/economy';
+
+function fmtNum(n: number): string {
+  if (n >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return Math.round(n).toString();
+}
 
 export default function SendTroopsModal() {
   const targetId = useGameStore((s) => s.dispatchTargetId);
@@ -15,15 +26,24 @@ export default function SendTroopsModal() {
 
   const target = targetId ? countries[targetId] : null;
   const player = playerId ? nations[playerId] : null;
+  const targetNation = targetId ? nations[targetId] : null;
 
-  const garrison = player
-    ? Math.floor(player.troops * BALANCE_MOVEMENT.homeGarrisonFraction)
-    : 0;
-  const available = player ? Math.max(0, player.troops - garrison) : 0;
+  // Per-type max we can send (each pool minus 10 % garrison).
+  const availableByType = useMemo(() => {
+    if (!player) return { infantry: 0, cavalry: 0, artillery: 0 };
+    const g = BALANCE_MOVEMENT.homeGarrisonFraction;
+    return {
+      infantry: Math.max(0, player.infantry - Math.floor(player.infantry * g)),
+      cavalry: Math.max(0, player.cavalry - Math.floor(player.cavalry * g)),
+      artillery: Math.max(
+        0,
+        player.artillery - Math.floor(player.artillery * g),
+      ),
+    };
+  }, [player]);
 
   const path = useMemo(() => {
     if (!playerId || !targetId) return null;
-    // shortest path from any owned territory to target
     const myIds = Object.entries(ownership)
       .filter(([, owner]) => owner === playerId)
       .map(([tid]) => tid);
@@ -38,15 +58,26 @@ export default function SendTroopsModal() {
   const reachable = path !== null && path.length > 1;
   const hops = path ? path.length - 1 : 0;
 
-  const [count, setCount] = useState(0);
+  const [send, setSend] = useState<Composition>({
+    infantry: 0,
+    cavalry: 0,
+    artillery: 0,
+  });
 
+  // Reset to half each time the target opens.
   useEffect(() => {
-    setCount(Math.min(available, Math.max(10, Math.floor(available / 2))));
-  }, [targetId, available]);
+    if (!targetId) return;
+    setSend({
+      infantry: Math.floor(availableByType.infantry / 2),
+      cavalry: Math.floor(availableByType.cavalry / 2),
+      artillery: Math.floor(availableByType.artillery / 2),
+    });
+  }, [targetId, availableByType.infantry, availableByType.cavalry, availableByType.artillery]);
 
-  if (!targetId || !target || !player) {
-    return <AnimatePresence />;
-  }
+  if (!targetId || !target || !player) return <AnimatePresence />;
+
+  const totalSend = send.infantry + send.cavalry + send.artillery;
+  const defenderTotal = targetNation ? totalTroops(targetNation) : 0;
 
   return (
     <AnimatePresence>
@@ -71,7 +102,7 @@ export default function SendTroopsModal() {
             border: '1px solid var(--ink)',
             boxShadow: '0 8px 24px rgba(26,24,20,0.22)',
             padding: '22px 28px 24px',
-            width: 'min(92vw, 420px)',
+            width: 'min(94vw, 460px)',
           }}
         >
           <div
@@ -85,10 +116,21 @@ export default function SendTroopsModal() {
               fontStyle: 'italic',
               color: 'var(--ink-faded)',
               fontSize: 14,
-              marginBottom: 16,
+              marginBottom: 4,
             }}
           >
             Dispatch troops to <strong>{target.name}</strong>
+          </div>
+          <div
+            className="num"
+            style={{
+              fontSize: 11,
+              color: 'var(--ink-faded)',
+              marginBottom: 14,
+            }}
+          >
+            Defenders: {fmtNum(defenderTotal)} ·{' '}
+            {target.terrain} · {fmtNum(target.population)} pop
           </div>
 
           {!reachable ? (
@@ -108,33 +150,67 @@ export default function SendTroopsModal() {
                 style={{
                   fontSize: 12,
                   color: 'var(--ink-faded)',
-                  marginBottom: 10,
+                  marginBottom: 12,
                 }}
               >
-                Travel: {hops} {hops === 1 ? 'month' : 'months'} ·
-                Garrison reserved: {garrison}
+                Travel: {hops} {hops === 1 ? 'month' : 'months'} · 10 % garrison reserved
               </div>
-              <input
-                type="range"
-                min={0}
-                max={available}
-                step={1}
-                value={count}
-                onChange={(e) => setCount(Number(e.target.value))}
-                style={{ width: '100%' }}
-              />
+
+              {(['infantry', 'cavalry', 'artillery'] as const).map((type) => {
+                const max = availableByType[type];
+                return (
+                  <div key={type} style={{ marginBottom: 10 }}>
+                    <div
+                      className="flex items-center justify-between"
+                      style={{ marginBottom: 4 }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12,
+                          letterSpacing: '0.06em',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        {TROOP_LABELS[type]}
+                      </span>
+                      <span className="num" style={{ fontSize: 13 }}>
+                        {send[type]} / {max}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={max}
+                      step={1}
+                      value={send[type]}
+                      onChange={(e) =>
+                        setSend((prev) => ({
+                          ...prev,
+                          [type]: Number(e.target.value),
+                        }))
+                      }
+                      style={{ width: '100%' }}
+                      disabled={max === 0}
+                    />
+                  </div>
+                );
+              })}
+
               <div
-                className="flex items-center justify-between num"
-                style={{ marginTop: 6, fontSize: 14 }}
+                className="num"
+                style={{
+                  marginTop: 6,
+                  fontSize: 12,
+                  color: 'var(--ink-faded)',
+                  textAlign: 'right',
+                }}
               >
-                <span style={{ color: 'var(--ink-faded)' }}>0</span>
-                <span style={{ fontSize: 22 }}>{count}</span>
-                <span style={{ color: 'var(--ink-faded)' }}>{available}</span>
+                Total: {fmtNum(totalSend)}
               </div>
             </>
           )}
 
-          <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
             <button
               type="button"
               onClick={closeDispatch}
@@ -153,21 +229,24 @@ export default function SendTroopsModal() {
             </button>
             <button
               type="button"
-              disabled={!reachable || count <= 0}
+              disabled={!reachable || totalSend <= 0}
               onClick={() => {
-                if (count > 0) dispatchTroops(targetId, count);
+                if (totalSend > 0) dispatchTroops(targetId, send);
               }}
               style={{
                 flex: 1,
                 background:
-                  reachable && count > 0 ? 'var(--ink)' : 'transparent',
-                color: reachable && count > 0 ? 'var(--paper)' : 'var(--ink-faded)',
+                  reachable && totalSend > 0 ? 'var(--ink)' : 'transparent',
+                color:
+                  reachable && totalSend > 0
+                    ? 'var(--paper)'
+                    : 'var(--ink-faded)',
                 border: '1px solid var(--ink)',
                 padding: '8px 14px',
                 fontFamily: '"Crimson Pro", serif',
                 fontSize: 15,
-                cursor: reachable && count > 0 ? 'pointer' : 'not-allowed',
-                opacity: reachable && count > 0 ? 1 : 0.5,
+                cursor: reachable && totalSend > 0 ? 'pointer' : 'not-allowed',
+                opacity: reachable && totalSend > 0 ? 1 : 0.5,
               }}
             >
               Dispatch

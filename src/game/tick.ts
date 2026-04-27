@@ -28,7 +28,12 @@ import {
   type AIBrain,
 } from './ai';
 import { evaluateVictory, type VictoryState } from './victory';
-import { BALANCE_MOVEMENT, BALANCE_CONTROL, BALANCE_TROOPS } from './balance';
+import {
+  BALANCE,
+  BALANCE_MOVEMENT,
+  BALANCE_CONTROL,
+  BALANCE_TROOPS,
+} from './balance';
 
 export type GameDate = { year: number; month: number };
 
@@ -90,6 +95,7 @@ export type TickInput = {
   date: GameDate;
   tickCount: number;
   countries: Record<string, Country>;
+  populations: Record<string, number>;
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
   control: Record<string, number>;
@@ -99,12 +105,15 @@ export type TickInput = {
   movements: TroopMovement[];
   playerCountryId: string | null;
   homeCountryId: string | null;
+  /** Whether the player has unlocked auto-recruit (logistics tech). */
+  playerAutoRecruit: boolean;
   rng: () => number;
 };
 
 export type TickOutput = {
   date: GameDate;
   ownership: Record<string, string>;
+  populations: Record<string, number>;
   nations: Record<string, Nation>;
   control: Record<string, number>;
   contestedBy: Record<string, string>;
@@ -316,9 +325,14 @@ function processMovements(input: {
     const attackerSide = {
       ...arrival.composition,
       tech: attackerNation.tech,
+      unlockedTech: attackerNation.unlockedTech,
     };
     const defenderSide = defenderNation
-      ? { ...asComposition(defenderNation), tech: defenderNation.tech }
+      ? {
+          ...asComposition(defenderNation),
+          tech: defenderNation.tech,
+          unlockedTech: defenderNation.unlockedTech,
+        }
       : { infantry: 0, cavalry: 0, artillery: 0, tech: 1 };
 
     const result = resolveBattle(
@@ -539,7 +553,7 @@ function applyAIAction(args: {
       let goldLeft = self.gold;
       const additions: Composition = { infantry: 0, cavalry: 0, artillery: 0 };
       for (const t of ['infantry', 'cavalry', 'artillery'] as const) {
-        const cost = recruitCost(t, country.specializations);
+        const cost = recruitCost(t, country.specializations, self.unlockedTech);
         const wantN = Math.max(0, Math.round(want[t]));
         for (let i = 0; i < wantN; i++) {
           if (totalTroops(self) + additions.infantry + additions.cavalry + additions.artillery >= cap) break;
@@ -664,11 +678,108 @@ function applyAIAction(args: {
   }
 }
 
+function growPopulations(
+  populations: Record<string, number>,
+): Record<string, number> {
+  const next: Record<string, number> = {};
+  for (const [id, pop] of Object.entries(populations)) {
+    next[id] = Math.round(pop * (1 + BALANCE.populationGrowthPerTick));
+  }
+  return next;
+}
+
+/**
+ * After income & upkeep, every nation with surplus gold automatically
+ * recruits a small batch of troops. Player nations only auto-recruit if
+ * they've unlocked the corresponding tech. Without this background growth
+ * armies stagnate at low counts even after centuries.
+ */
+function passiveRecruit(
+  countries: Record<string, Country>,
+  populations: Record<string, number>,
+  nations: Record<string, Nation>,
+  playerCountryId: string | null,
+  playerAutoRecruit: boolean,
+): Record<string, Nation> {
+  let updated = nations;
+  for (const [id, nation] of Object.entries(nations)) {
+    if (id === playerCountryId && !playerAutoRecruit) continue;
+    const country = countries[id];
+    if (!country) continue;
+    const pop = populations[id] ?? country.population;
+    const cap = Math.floor(pop * BALANCE.maxTroopsPerPopulation) *
+      (country.specializations.includes('martial') ? 1.25 : 1);
+    const total =
+      nation.infantry + nation.cavalry + nation.artillery;
+    if (total >= cap) continue;
+    const upkeepNow =
+      (nation.infantry + nation.cavalry * 1.4 + nation.artillery * 1.7) *
+      BALANCE.troopUpkeepRate;
+    const buffer = upkeepNow * BALANCE.maintenanceBufferTicks;
+    const surplus = nation.gold - buffer;
+    if (surplus <= 0) continue;
+    const spend = surplus * BALANCE.passiveRecruitFraction;
+
+    // Spend in the doctrine's mix (default 70/25/5 if no brain available).
+    const mix = { infantry: 0.7, cavalry: 0.25, artillery: 0.05 };
+    let goldLeft = spend;
+    let addInf = 0;
+    let addCav = 0;
+    let addArt = 0;
+    const infCost = country.specializations.includes('industrial') ? 8 : 8;
+    const cavCost = country.specializations.includes('horseBreeders') ? 13 : 18;
+    const artCost = country.specializations.includes('industrial') ? 22 : 32;
+
+    const tryBuy = (
+      cost: number,
+      portion: number,
+      adder: (n: number) => void,
+    ) => {
+      const budget = goldLeft * portion;
+      const n = Math.floor(budget / cost);
+      if (n <= 0) return;
+      const remaining = cap - (total + addInf + addCav + addArt);
+      const buy = Math.min(n, Math.max(0, remaining));
+      if (buy <= 0) return;
+      adder(buy);
+      goldLeft -= buy * cost;
+    };
+    tryBuy(infCost, mix.infantry, (n) => (addInf = n));
+    tryBuy(cavCost, mix.cavalry, (n) => (addCav = n));
+    tryBuy(artCost, mix.artillery, (n) => (addArt = n));
+
+    if (addInf + addCav + addArt === 0) continue;
+    const goldSpent = addInf * infCost + addCav * cavCost + addArt * artCost;
+    updated = {
+      ...updated,
+      [id]: {
+        ...updated[id],
+        gold: updated[id].gold - goldSpent,
+        infantry: updated[id].infantry + addInf,
+        cavalry: updated[id].cavalry + addCav,
+        artillery: updated[id].artillery + addArt,
+      },
+    };
+  }
+  return updated;
+}
+
 export function runTick(input: TickInput): TickOutput {
   const date = advanceDate(input.date);
   const now = performance.now();
 
+  // 0) Population growth
+  const populations = growPopulations(input.populations);
+
   let nations = applyEconomy(input.countries, input.ownership, input.nations);
+  // 0.5) Passive recruit so armies scale with the world.
+  nations = passiveRecruit(
+    input.countries,
+    populations,
+    nations,
+    input.playerCountryId,
+    input.playerAutoRecruit,
+  );
 
   const moveStep = processMovements({
     countries: input.countries,
@@ -745,6 +856,7 @@ export function runTick(input: TickInput): TickOutput {
   return {
     date,
     ownership,
+    populations,
     nations,
     control,
     contestedBy,

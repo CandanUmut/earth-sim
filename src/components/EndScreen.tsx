@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { MONTH_NAMES } from '../game/tick';
+import Fireworks from './Fireworks';
 
 function fmtNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -47,6 +48,7 @@ export default function EndScreen() {
           className="absolute inset-0 z-50 flex items-center justify-center"
           style={{ background: 'rgba(26,24,20,0.55)' }}
         >
+          {isWin && <Fireworks />}
           <motion.div
             initial={{ y: 30, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}

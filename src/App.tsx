@@ -9,6 +9,7 @@ import SendTroopsModal from './components/SendTroopsModal';
 import BattleLog from './components/BattleLog';
 import EndScreen from './components/EndScreen';
 import Tutorial from './components/Tutorial';
+import TechTreePanel from './components/TechTreePanel';
 import { useGameStore } from './store/gameStore';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
       <TimeControls />
       <BattleLog />
       <SendTroopsModal />
+      <TechTreePanel />
       <StartScreen />
       <Tutorial />
       <EndScreen />

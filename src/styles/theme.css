@@ -67,3 +67,12 @@ body::before {
   0% { transform: translateY(0); opacity: 1; }
   100% { transform: translateY(-12px); opacity: 0; }
 }
+@keyframes warPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
+@keyframes fireworkBurst {
+  0% { opacity: 1; r: 1; }
+  60% { opacity: 0.9; }
+  100% { opacity: 0; r: 26; }
+}

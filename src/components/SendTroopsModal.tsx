@@ -2,12 +2,15 @@ import { useState, useEffect, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { findPath } from '../game/movement';
-import { BALANCE_MOVEMENT } from '../game/balance';
+import { BALANCE_MOVEMENT, BALANCE_TROOPS, BALANCE_SPECS } from '../game/balance';
 import {
+  asComposition,
   totalTroops,
   TROOP_LABELS,
   type Composition,
 } from '../game/economy';
+import { combatTechMultiplier } from '../game/techTree';
+import { TERRAIN_BONUS } from '../game/combat';
 
 function fmtNum(n: number): string {
   if (n >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
@@ -78,6 +81,92 @@ export default function SendTroopsModal() {
 
   const totalSend = send.infantry + send.cavalry + send.artillery;
   const defenderTotal = targetNation ? totalTroops(targetNation) : 0;
+
+  // ---- Battle preview ----
+  const preview = useMemo(() => {
+    if (!player || !target) return null;
+    const oppTotal = defenderTotal;
+    const sendTotal = totalSend;
+    if (sendTotal === 0) return null;
+    const defComp = targetNation
+      ? asComposition(targetNation)
+      : { infantry: 0, cavalry: 0, artillery: 0 };
+
+    const strength = (
+      self: Composition,
+      opp: Composition,
+      tech: number,
+      techMul: number,
+      defenseMul = 1,
+    ) => {
+      const oppT = opp.infantry + opp.cavalry + opp.artillery;
+      let s = 0;
+      const types = ['infantry', 'cavalry', 'artillery'] as const;
+      for (const t of types) {
+        const my = self[t];
+        if (my === 0) continue;
+        let mul: number;
+        if (oppT === 0) mul = 1;
+        else {
+          mul = 0;
+          for (const d of types) mul += BALANCE_TROOPS.rps[t][d] * (opp[d] / oppT);
+        }
+        s += my * BALANCE_TROOPS.baseDamage[t] * mul;
+      }
+      return s * tech * techMul * defenseMul;
+    };
+
+    const atkStr = strength(
+      send,
+      defComp,
+      player.tech,
+      combatTechMultiplier(player.unlockedTech),
+    );
+    const defenseMul =
+      1 +
+      (TERRAIN_BONUS[target.terrain] ?? 0) +
+      (target.specializations.includes('fortified')
+        ? BALANCE_SPECS.fortified.extraDefenseBonus
+        : 0);
+    const defStr = targetNation
+      ? strength(
+          defComp,
+          send,
+          targetNation.tech,
+          combatTechMultiplier(targetNation.unlockedTech),
+          defenseMul,
+        )
+      : 0;
+    const ratio = atkStr / Math.max(0.001, defStr);
+    let verdict: string;
+    let color: string;
+    if (ratio > 2.5) {
+      verdict = 'crushing';
+      color = 'var(--accent-gold)';
+    } else if (ratio > 1.4) {
+      verdict = 'favored';
+      color = 'var(--accent-sage)';
+    } else if (ratio > 0.85) {
+      verdict = 'close fight';
+      color = '#c97a1f';
+    } else if (ratio > 0.5) {
+      verdict = 'unfavored';
+      color = 'var(--accent-blood)';
+    } else {
+      verdict = 'suicidal';
+      color = 'var(--accent-blood)';
+    }
+    return {
+      atkStr,
+      defStr,
+      verdict,
+      color,
+      defenseMul,
+      oppTotal,
+      sendTotal,
+    };
+  }, [player, target, targetNation, defenderTotal, send, totalSend]);
+  // ----
 
   return (
     <AnimatePresence>
@@ -207,6 +296,64 @@ export default function SendTroopsModal() {
               >
                 Total: {fmtNum(totalSend)}
               </div>
+
+              {preview && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: '8px 10px',
+                    border: `1px solid ${preview.color}`,
+                    background: 'rgba(184,134,11,0.05)',
+                  }}
+                >
+                  <div
+                    className="flex items-center justify-between"
+                    style={{
+                      fontSize: 11,
+                      letterSpacing: '0.1em',
+                      textTransform: 'uppercase',
+                      color: 'var(--ink-faded)',
+                      marginBottom: 4,
+                    }}
+                  >
+                    <span>Battle preview</span>
+                    <span
+                      style={{
+                        color: preview.color,
+                        fontStyle: 'italic',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {preview.verdict}
+                    </span>
+                  </div>
+                  <div
+                    className="num"
+                    style={{ fontSize: 12, color: 'var(--ink)' }}
+                  >
+                    Your strength {Math.round(preview.atkStr)} vs defender{' '}
+                    {Math.round(preview.defStr)}
+                    {preview.defenseMul > 1 && (
+                      <span style={{ color: 'var(--accent-blood)' }}>
+                        {' '}
+                        (terrain ×{preview.defenseMul.toFixed(2)})
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--ink-faded)',
+                      marginTop: 4,
+                      fontStyle: 'italic',
+                    }}
+                  >
+                    Each side rolls strength × random[0.85,1.15]; higher wins.
+                    Loser takes ~80 % casualties on a blowout (less if close);
+                    winner ~5–40 %. Conquest needs control to hit 0.
+                  </div>
+                </div>
+              )}
             </>
           )}
 

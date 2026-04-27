@@ -26,6 +26,13 @@ import {
   type AIBrain,
 } from '../game/ai';
 import {
+  TECH_NODES,
+  isUnlockable,
+  navalCostUnit,
+  statecraftMultiplier,
+  type TechNodeId,
+} from '../game/techTree';
+import {
   findPath,
   newMovementId,
   type TroopMovement,
@@ -77,6 +84,7 @@ export type GameState = {
   battleLog: BattleLogEntry[];
   battleAnimations: BattleAnimation[];
   arrivalTrails: ArrivalEvent[];
+  populations: Record<string, number>;
   date: GameDate;
   tickCount: number;
 
@@ -92,6 +100,7 @@ export type GameState = {
   battleLogOpen: boolean;
   dispatchTargetId: string | null;
   savedSummary: SaveSummary | null;
+  techPanelOpen: boolean;
 
   loadInitialWorld: () => Promise<void>;
   setSelected: (id: string | null) => void;
@@ -113,6 +122,9 @@ export type GameState = {
   toggleBattleLog: () => void;
   dismissEndScreen: () => void;
   newCampaign: () => void;
+  researchTech: (id: TechNodeId) => void;
+  toggleAutoRecruit: () => void;
+  setTechPanelOpen: (open: boolean) => void;
   pruneTrails: () => void;
   resumeCampaign: () => void;
   saveNow: () => void;
@@ -164,6 +176,7 @@ const initialState = {
   battleLog: [] as BattleLogEntry[],
   battleAnimations: [] as BattleAnimation[],
   arrivalTrails: [] as ArrivalEvent[],
+  populations: {} as Record<string, number>,
   date: { year: 1900, month: 0 } as GameDate,
   tickCount: 0,
   playerCountryId: null as string | null,
@@ -177,6 +190,7 @@ const initialState = {
   battleLogOpen: false,
   dispatchTargetId: null as string | null,
   savedSummary: null as SaveSummary | null,
+  techPanelOpen: false,
 };
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -192,6 +206,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const nations: Record<string, Nation> = {};
       const brains: Record<string, AIBrain> = {};
       const control: Record<string, number> = {};
+      const populations: Record<string, number> = {};
       const order: string[] = [];
       for (const c of countries) {
         byId[c.id] = c;
@@ -199,6 +214,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         nations[c.id] = makeStartingNation(c);
         brains[c.id] = newBrain();
         control[c.id] = BALANCE_CONTROL.fullControl;
+        populations[c.id] = c.population;
         order.push(c.id);
       }
       set({
@@ -208,6 +224,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         nations,
         brains,
         control,
+        populations,
         geo,
         loaded: true,
         loading: false,
@@ -316,10 +333,16 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   tick: () => {
     const s = get();
+    const playerNation = s.playerCountryId ? s.nations[s.playerCountryId] : null;
+    const playerAutoRecruit =
+      !!playerNation &&
+      playerNation.autoRecruit &&
+      playerNation.unlockedTech.includes('log_conscription');
     const result = runTick({
       date: s.date,
       tickCount: s.tickCount + 1,
       countries: s.countries,
+      populations: s.populations,
       ownership: s.ownership,
       nations: s.nations,
       brains: s.brains,
@@ -329,6 +352,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       movements: s.movements,
       playerCountryId: s.playerCountryId,
       homeCountryId: s.homeCountryId,
+      playerAutoRecruit,
       rng: Math.random,
     });
 
@@ -361,6 +385,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       date: result.date,
       tickCount: s.tickCount + 1,
       ownership: result.ownership,
+      populations: result.populations,
       nations: result.nations,
       brains: result.brains,
       control: result.control,
@@ -389,7 +414,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     } else if ((s.tickCount + 1) % 10 === 0) {
       const now2 = get();
       writeSave({
-        version: 2,
+        version: 3,
         savedAt: Date.now(),
         ownership: now2.ownership,
         nations: now2.nations,
@@ -399,6 +424,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         lastBattleTick: now2.lastBattleTick,
         movements: now2.movements,
         battleLog: now2.battleLog,
+        populations: now2.populations,
         date: now2.date,
         tickCount: now2.tickCount,
         playerCountryId: now2.playerCountryId,
@@ -435,6 +461,23 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (p && (!bestPath || p.length < bestPath.length)) {
         bestPath = p;
         bestFromId = myId;
+      }
+    }
+    // Re-run path with the player's tech (Naval Engineers cuts cost).
+    {
+      const navalCost = navalCostUnit(player.unlockedTech);
+      let bp: string[] | null = null;
+      let bfId: string | null = null;
+      for (const myId of myIds) {
+        const p2 = findPath(countries, myId, toId, navalCost);
+        if (p2 && (!bp || p2.length < bp.length)) {
+          bp = p2;
+          bfId = myId;
+        }
+      }
+      if (bp && bfId) {
+        bestPath = bp;
+        bestFromId = bfId;
       }
     }
     if (!bestPath || !bestFromId) return;
@@ -521,11 +564,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!playerCountryId || playerCountryId === targetId) return;
     const targetBrain = brains[targetId];
     if (!targetBrain) return;
+    const player = nations[playerCountryId];
     const accepted = evaluateAllianceProposal({
       proposerId: playerCountryId,
       targetId,
       nations,
       brain: targetBrain,
+      acceptMultiplier: player ? statecraftMultiplier(player.unlockedTech) : 1,
     });
     if (accepted) {
       set({
@@ -565,6 +610,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const nations: Record<string, Nation> = {};
     const brains: Record<string, AIBrain> = {};
     const control: Record<string, number> = {};
+    const populations: Record<string, number> = {};
     for (const id of countryOrder) {
       const c = countries[id];
       if (!c) continue;
@@ -572,6 +618,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       nations[id] = makeStartingNation(c);
       brains[id] = newBrain();
       control[id] = BALANCE_CONTROL.fullControl;
+      populations[id] = c.population;
     }
     set({
       ...initialState,
@@ -582,10 +629,48 @@ export const useGameStore = create<GameState>((set, get) => ({
       nations,
       brains,
       control,
+      populations,
       loaded: true,
       savedSummary: null,
     });
   },
+
+  researchTech: (id) => {
+    const { playerCountryId, nations } = get();
+    if (!playerCountryId) return;
+    const nation = nations[playerCountryId];
+    if (!nation) return;
+    if (!isUnlockable(id, nation.unlockedTech, nation.gold)) return;
+    const node = TECH_NODES.find((n) => n.id === id);
+    if (!node) return;
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...nation,
+          gold: nation.gold - node.cost,
+          unlockedTech: [...nation.unlockedTech, id],
+        },
+      },
+    });
+    playSound('alliance');
+  },
+
+  toggleAutoRecruit: () => {
+    const { playerCountryId, nations } = get();
+    if (!playerCountryId) return;
+    const nation = nations[playerCountryId];
+    if (!nation) return;
+    if (!nation.unlockedTech.includes('log_conscription')) return;
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: { ...nation, autoRecruit: !nation.autoRecruit },
+      },
+    });
+  },
+
+  setTechPanelOpen: (open) => set({ techPanelOpen: open }),
 
   pruneTrails: () => {
     const now = performance.now();
@@ -611,6 +696,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastBattleTick: save.lastBattleTick,
       movements: save.movements,
       battleLog: save.battleLog,
+      populations: save.populations ?? get().populations,
       arrivalTrails: [],
       date: save.date,
       tickCount: save.tickCount,
@@ -629,7 +715,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const s = get();
     if (!s.gameStarted || !s.playerCountryId) return;
     writeSave({
-      version: 2,
+      version: 3,
       savedAt: Date.now(),
       ownership: s.ownership,
       nations: s.nations,
@@ -639,6 +725,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastBattleTick: s.lastBattleTick,
       movements: s.movements,
       battleLog: s.battleLog,
+      populations: s.populations,
       date: s.date,
       tickCount: s.tickCount,
       playerCountryId: s.playerCountryId,

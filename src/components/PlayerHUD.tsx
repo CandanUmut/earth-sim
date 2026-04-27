@@ -1,4 +1,4 @@
-import { Coins, Sparkles, Shield, Wind, Crosshair } from 'lucide-react';
+import { Coins, Sparkles, Shield, Wind, Crosshair, BookOpen } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
 import { countryFill, SPEC_LABELS } from '../game/world';
 import {
@@ -32,6 +32,7 @@ export default function PlayerHUD() {
   );
   const recruit = useGameStore((s) => s.recruit);
   const invest = useGameStore((s) => s.investInTech);
+  const setTechPanelOpen = useGameStore((s) => s.setTechPanelOpen);
 
   if (!playerId || !country || !nation) return null;
 
@@ -179,26 +180,60 @@ export default function PlayerHUD() {
         );
       })}
 
-      <button
-        type="button"
-        disabled={nation.gold < techInvestmentCost()}
-        onClick={invest}
-        style={{
-          width: '100%',
-          marginTop: 10,
-          background:
-            nation.gold >= techInvestmentCost() ? 'var(--paper)' : 'transparent',
-          color: nation.gold >= techInvestmentCost() ? 'var(--ink)' : 'var(--ink-faded)',
-          border: '1px solid var(--ink)',
-          padding: '6px',
-          fontFamily: '"Crimson Pro", serif',
-          fontSize: 12,
-          cursor: nation.gold >= techInvestmentCost() ? 'pointer' : 'not-allowed',
-          opacity: nation.gold >= techInvestmentCost() ? 1 : 0.5,
-        }}
-      >
-        Invest in Tech ({techInvestmentCost()}g)
-      </button>
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <button
+          type="button"
+          disabled={nation.gold < techInvestmentCost()}
+          onClick={invest}
+          title="Invest gold for a slow, generic combat-strength bump."
+          style={{
+            flex: 1,
+            background:
+              nation.gold >= techInvestmentCost() ? 'var(--paper)' : 'transparent',
+            color: nation.gold >= techInvestmentCost() ? 'var(--ink)' : 'var(--ink-faded)',
+            border: '1px solid var(--ink)',
+            padding: '6px',
+            fontFamily: '"Crimson Pro", serif',
+            fontSize: 12,
+            cursor: nation.gold >= techInvestmentCost() ? 'pointer' : 'not-allowed',
+            opacity: nation.gold >= techInvestmentCost() ? 1 : 0.5,
+          }}
+        >
+          Invest +Tech ({techInvestmentCost()}g)
+        </button>
+        <button
+          type="button"
+          onClick={() => setTechPanelOpen(true)}
+          title="Tech Tree — discrete unlocks across military / economy / logistics / diplomacy."
+          style={{
+            background: 'var(--accent-gold)',
+            color: 'var(--paper)',
+            border: '1px solid var(--accent-gold)',
+            padding: '6px 10px',
+            fontFamily: '"Crimson Pro", serif',
+            fontSize: 12,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <BookOpen size={12} /> Tech
+        </button>
+      </div>
+      {nation.unlockedTech.length > 0 && (
+        <div
+          style={{
+            fontSize: 10,
+            color: 'var(--ink-faded)',
+            marginTop: 4,
+            textAlign: 'center',
+          }}
+        >
+          {nation.unlockedTech.length} tech unlocked
+          {nation.autoRecruit && ' · auto-recruit on'}
+        </div>
+      )}
 
       {country.specializations.length > 0 && (
         <div

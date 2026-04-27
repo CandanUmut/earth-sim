@@ -1,8 +1,12 @@
 import type { Country, Specialization, Terrain } from './world';
 import { TROOP_TYPES, type Composition, type TroopType } from './economy';
 import { BALANCE_TROOPS, BALANCE_SPECS } from './balance';
+import { combatTechMultiplier, type TechNodeId } from './techTree';
 
-export type CombatSide = Composition & { tech: number };
+export type CombatSide = Composition & {
+  tech: number;
+  unlockedTech?: TechNodeId[];
+};
 
 export type LossesByType = Record<TroopType, number>;
 
@@ -90,12 +94,15 @@ export function resolveBattle(
   defenderSpecs: Specialization[] = defenderTerrain.specializations,
   rng: Rng = Math.random,
 ): BattleResult {
-  const atkBase = combatStrength(attacker, defender) * attacker.tech;
+  const atkTechMul = combatTechMultiplier(attacker.unlockedTech ?? []);
+  const defTechMul = combatTechMultiplier(defender.unlockedTech ?? []);
+  const atkBase = combatStrength(attacker, defender) * attacker.tech * atkTechMul;
   let defenseMul = 1 + terrainBonus(defenderTerrain);
   if (defenderSpecs.includes('fortified')) {
     defenseMul += BALANCE_SPECS.fortified.extraDefenseBonus;
   }
-  const defBase = combatStrength(defender, attacker) * defender.tech * defenseMul;
+  const defBase =
+    combatStrength(defender, attacker) * defender.tech * defTechMul * defenseMul;
 
   const attackerRoll = atkBase * rollVariance(rng);
   const defenderRoll = defBase * rollVariance(rng);
@@ -105,8 +112,10 @@ export function resolveBattle(
   const low = Math.min(attackerRoll, defenderRoll);
   const closeness = high === 0 ? 0 : low / high;
 
-  const loserRate = 0.6 + closeness * 0.3;
-  const winnerRate = 0.2 + closeness * 0.3;
+  // Blowouts: loser bleeds 80–85 %, winner only 5–10 %.
+  // Close fights: both bleed 40–50 %.
+  const loserRate = 0.85 - closeness * 0.35;
+  const winnerRate = 0.05 + closeness * 0.4;
 
   const attackerLossRate = attackerWon ? winnerRate : loserRate;
   const defenderLossRate = attackerWon ? loserRate : winnerRate;

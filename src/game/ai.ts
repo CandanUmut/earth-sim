@@ -226,8 +226,11 @@ export function evaluateAllianceProposal(args: {
   targetId: string;
   nations: Record<string, Nation>;
   brain: AIBrain;
+  /** Bonus to acceptance probability (e.g. Statecraft tech = 2). */
+  acceptMultiplier?: number;
 }): boolean {
   const { proposerId, targetId, nations, brain } = args;
+  const m = args.acceptMultiplier ?? 1;
   const target = nations[targetId];
   const proposer = nations[proposerId];
   if (!target || !proposer) return false;
@@ -237,15 +240,15 @@ export function evaluateAllianceProposal(args: {
 
   switch (brain.personality) {
     case 'aggressive':
-      return strengthRatio > 0.8 && Math.random() < 0.3;
+      return strengthRatio > 0.8 && Math.random() < 0.3 * m;
     case 'defensive':
       return strengthRatio > BALANCE_AI.allianceAcceptStrengthRatio;
     case 'opportunist':
-      return strengthRatio > 0.5 && Math.random() < 0.5;
+      return strengthRatio > 0.5 && Math.random() < 0.5 * m;
     case 'isolationist':
-      return strengthRatio > 1.2 && Math.random() < 0.2;
+      return strengthRatio > 1.2 && Math.random() < 0.2 * m;
     case 'merchant':
-      return strengthRatio > 0.4 && Math.random() < 0.7;
+      return strengthRatio > 0.4 && Math.random() < 0.7 * m;
   }
 }
 

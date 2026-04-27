@@ -4,11 +4,11 @@ import type { TroopMovement } from '../game/movement';
 import type { AIBrain } from '../game/ai';
 import type { VictoryState } from '../game/victory';
 
-const SAVE_KEY = 'terra-bellum-save-v2';
+const SAVE_KEY = 'terra-bellum-save-v3';
 const TUTORIAL_KEY = 'terra-bellum-tutorial-seen-v1';
 
 export type SavePayload = {
-  version: 2;
+  version: 3;
   savedAt: number;
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
@@ -18,6 +18,7 @@ export type SavePayload = {
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   battleLog: BattleLogEntry[];
+  populations: Record<string, number>;
   date: GameDate;
   tickCount: number;
   playerCountryId: string | null;
@@ -47,7 +48,7 @@ export function readSave(): SavePayload | null {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SavePayload;
-    if (parsed.version !== 2) return null;
+    if (parsed.version !== 3) return null;
     return parsed;
   } catch {
     return null;
@@ -57,8 +58,8 @@ export function readSave(): SavePayload | null {
 export function clearSave(): void {
   try {
     localStorage.removeItem(SAVE_KEY);
-    // Also wipe the v1 key so old saves don't linger.
     localStorage.removeItem('terra-bellum-save-v1');
+    localStorage.removeItem('terra-bellum-save-v2');
   } catch {
     // ignore
   }

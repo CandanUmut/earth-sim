@@ -17,8 +17,14 @@ export const BALANCE = {
 
   // Economy
   territoryEconomyBonus: 0.1,
-  troopUpkeepRate: 0.05, // gold per troop per tick
+  troopUpkeepRate: 0.012, // gold per troop per tick (small armies sustainable)
   maxTroopsPerPopulation: 0.02,
+  /** Compound population growth per tick (≈ 0.36 % per year at 12 ticks/year). */
+  populationGrowthPerTick: 0.0003,
+  /** Gold reserve every nation tries to keep before discretionary spending. */
+  maintenanceBufferTicks: 12,
+  /** Fraction of surplus gold every nation auto-spends on troops each tick. */
+  passiveRecruitFraction: 0.25,
 
   // Tech investment
   techInvestmentCost: 100,

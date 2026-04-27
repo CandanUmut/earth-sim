@@ -154,6 +154,7 @@ export default function CountryAnnotations({ projection }: Props) {
         const layout = layouts.get(id);
         if (!country || !layout) return null;
         const owner = ownership[id] ?? id;
+        const ownerCountry = countries[owner] ?? country;
         const isCapital = owner === id;
         const ownerNation = nations[owner];
         const totalAtCapital = ownerNation ? totalTroops(ownerNation) : 0;
@@ -169,26 +170,31 @@ export default function CountryAnnotations({ projection }: Props) {
         // visual room (avoids splatting numbers across micro-states).
         const showBadge =
           isCapital && totalAtCapital > 0 && layout.pxWidth >= 22;
+        // Display owner's name on conquered territories so the empire reads
+        // as one. Smaller / lighter for non-capital territories.
+        const displayName = ownerCountry.name;
+        const labelOpacity = isCapital ? 1 : 0.65;
 
         return (
           <g key={id} transform={`translate(${layout.x} ${layout.y})`}>
-            {/* Country label (paint-order stroke for legibility on any fill) */}
+            {/* Country / empire label (paint-order stroke for legibility) */}
             <text
               x={0}
               y={0}
               textAnchor="middle"
               fontFamily='"Crimson Pro", serif'
               fontStyle="italic"
-              fontWeight={600}
+              fontWeight={isCapital ? 700 : 500}
               fontSize={fontSize}
               stroke="var(--paper)"
               strokeWidth={Math.max(1.4, fontSize / 4)}
               strokeLinejoin="round"
               fill="var(--ink)"
               paintOrder="stroke"
+              opacity={labelOpacity}
               style={{ pointerEvents: 'none' }}
             >
-              {country.name}
+              {displayName}
             </text>
 
             {showBadge && (

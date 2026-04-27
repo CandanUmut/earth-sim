@@ -1,5 +1,10 @@
 import type { Country, Specialization } from './world';
 import { BALANCE, BALANCE_TROOPS, BALANCE_SPECS } from './balance';
+import {
+  goldIncomeMultiplier,
+  recruitCostMultiplier,
+  type TechNodeId,
+} from './techTree';
 
 export type Stance = 'war' | 'neutral' | 'allied';
 
@@ -15,6 +20,10 @@ export type Nation = {
   artillery: number;
   tech: number;
   stance: Record<string, Stance>;
+  /** Tech-tree nodes this nation has unlocked. */
+  unlockedTech: TechNodeId[];
+  /** Auto-recruit toggle (only honored if log_conscription unlocked). */
+  autoRecruit: boolean;
 };
 
 export const TROOP_LABELS: Record<TroopType, string> = {
@@ -55,10 +64,12 @@ export function makeStartingNation(country: Country): Nation {
     artillery: Math.round(total * mix.artillery),
     tech: BALANCE.startingTech,
     stance: {},
+    unlockedTech: [],
+    autoRecruit: false,
   };
 }
 
-/** Specialization-aware gold income. */
+/** Specialization + tech-aware gold income. */
 export function goldPerTick(
   country: Country,
   nation: Nation,
@@ -68,7 +79,8 @@ export function goldPerTick(
   const specMul = country.specializations.includes('mercantile')
     ? BALANCE_SPECS.mercantile.goldMul
     : 1;
-  return country.baseEconomy * nation.tech * territoryFactor * specMul;
+  const techMul = goldIncomeMultiplier(nation.unlockedTech);
+  return country.baseEconomy * nation.tech * territoryFactor * specMul * techMul;
 }
 
 /** Total upkeep across all troop types. Cavalry / artillery cost more. */
@@ -89,10 +101,11 @@ export function maxTroops(country: Country): number {
   return baseCap;
 }
 
-/** Cost of recruiting one unit of the given type, after specializations. */
+/** Cost of recruiting one unit, after specializations and tech discounts. */
 export function recruitCost(
   type: TroopType,
   specs: Specialization[],
+  unlockedTech: TechNodeId[] = [],
 ): number {
   let cost: number = BALANCE_TROOPS.cost[type];
   if (type === 'cavalry' && specs.includes('horseBreeders')) {
@@ -100,7 +113,7 @@ export function recruitCost(
   } else if (type === 'artillery' && specs.includes('industrial')) {
     cost = Math.max(1, cost - BALANCE_SPECS.industrial.artilleryDiscount);
   }
-  return cost;
+  return Math.max(1, Math.round(cost * recruitCostMultiplier(unlockedTech)));
 }
 
 export function techInvestmentCost(): number {

@@ -22,14 +22,14 @@ export function newMovementId(): string {
 }
 
 /**
- * Dijkstra over land + naval edges. Land hops cost 1, naval hops cost 2 so
- * BFS-like shortest paths still naturally prefer dry routes when both
- * exist.
+ * Dijkstra over land + naval edges. Land hops cost 1, naval hops cost
+ * `navalCost` (default 2; 1 once Naval Engineers tech is unlocked).
  */
 export function findPath(
   countries: Record<string, Country>,
   fromId: string,
   toId: string,
+  navalCost = 2,
 ): string[] | null {
   if (fromId === toId) return [fromId];
   const start = countries[fromId];
@@ -65,7 +65,7 @@ export function findPath(
       }
     };
     for (const n of country.neighbors) expand(n, 1);
-    for (const n of country.navalNeighbors) expand(n, 2);
+    for (const n of country.navalNeighbors) expand(n, navalCost);
   }
   return null;
 }

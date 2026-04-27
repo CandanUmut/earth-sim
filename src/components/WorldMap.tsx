@@ -158,9 +158,15 @@ export default function WorldMap() {
       }
       if (pattern) {
         el.setAttribute('fill', pattern);
-        el.setAttribute('opacity', '0.5');
+        // Pulsing CSS animation for active wars.
+        el.style.animation =
+          pattern === 'url(#stripe-war)'
+            ? 'warPulse 1.4s ease-in-out infinite'
+            : 'none';
+        el.setAttribute('opacity', '0.55');
       } else {
         el.setAttribute('fill', 'transparent');
+        el.style.animation = 'none';
         el.setAttribute('opacity', '0');
       }
     });
@@ -171,6 +177,8 @@ export default function WorldMap() {
     const paths = gRef.current.querySelectorAll<SVGPathElement>('path.country');
     paths.forEach((el) => {
       const id = el.dataset.id ?? '';
+      const owner = ownership[id] ?? id;
+      const isCapital = owner === id;
       const isSelected = id === selectedId;
       const isHovered = id === hoveredId;
       el.setAttribute(
@@ -179,14 +187,16 @@ export default function WorldMap() {
       );
       el.setAttribute(
         'stroke-width',
-        String(isSelected ? 1.6 : isHovered ? 1.2 : 0.5),
+        String(isSelected ? 1.6 : isHovered ? 1.2 : isCapital ? 0.5 : 0.25),
       );
+      // Conquered territories get faded outlines so the empire reads unified.
+      const baseOpacity = isCapital ? 0.55 : 0.18;
       el.setAttribute(
         'stroke-opacity',
-        String(isSelected || isHovered ? 0.95 : 0.55),
+        String(isSelected || isHovered ? 0.95 : baseOpacity),
       );
     });
-  }, [selectedId, hoveredId]);
+  }, [selectedId, hoveredId, ownership]);
 
   if (!geo || !pathD) {
     return (

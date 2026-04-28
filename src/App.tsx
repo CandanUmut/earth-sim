@@ -6,6 +6,7 @@ import StartScreen from './components/StartScreen';
 import TimeControls from './components/TimeControls';
 import PlayerHUD from './components/PlayerHUD';
 import SendTroopsModal from './components/SendTroopsModal';
+import BattleHub from './components/BattleHub';
 import BattleLog from './components/BattleLog';
 import EndScreen from './components/EndScreen';
 import Tutorial from './components/Tutorial';
@@ -29,6 +30,7 @@ export default function App() {
       <TimeControls />
       <BattleLog />
       <SendTroopsModal />
+      <BattleHub />
       <TechTreePanel />
       <StartScreen />
       <Tutorial />

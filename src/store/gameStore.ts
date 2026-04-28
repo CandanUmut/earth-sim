@@ -39,6 +39,7 @@ import {
   newMovementId,
   type TroopMovement,
 } from '../game/movement';
+import type { ActiveBattle } from '../game/activeBattle';
 import { type VictoryState } from '../game/victory';
 import { BALANCE, BALANCE_MOVEMENT, BALANCE_CONTROL } from '../game/balance';
 import {
@@ -88,6 +89,7 @@ export type GameState = {
   contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
+  activeBattles: Record<string, ActiveBattle>;
   battleLog: BattleLogEntry[];
   battleAnimations: BattleAnimation[];
   arrivalTrails: ArrivalEvent[];
@@ -112,6 +114,8 @@ export type GameState = {
   /** Bumped each time setCameraTarget runs so WorldMap re-applies even on
    *  identical target value (e.g. re-snapping back to same country). */
   cameraVersion: number;
+  /** Country id for the Battle Hub modal, or null when closed. */
+  focusedBattleLocationId: string | null;
 
   loadInitialWorld: () => Promise<void>;
   setSelected: (id: string | null) => void;
@@ -141,6 +145,9 @@ export type GameState = {
   resumeCampaign: () => void;
   saveNow: () => void;
   setCameraTarget: (target: CameraTarget) => void;
+  openBattleHub: (locationId: string) => void;
+  closeBattleHub: () => void;
+  retreatFromBattle: (locationId: string) => void;
 };
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -186,6 +193,7 @@ const initialState = {
   contestedBy: {} as Record<string, string>,
   lastBattleTick: {} as Record<string, number>,
   movements: [] as TroopMovement[],
+  activeBattles: {} as Record<string, ActiveBattle>,
   battleLog: [] as BattleLogEntry[],
   battleAnimations: [] as BattleAnimation[],
   arrivalTrails: [] as ArrivalEvent[],
@@ -206,6 +214,7 @@ const initialState = {
   techPanelOpen: false,
   cameraTarget: null as CameraTarget,
   cameraVersion: 0,
+  focusedBattleLocationId: null as string | null,
 };
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -388,6 +397,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       contestedBy: s.contestedBy,
       lastBattleTick: s.lastBattleTick,
       movements: s.movements,
+      activeBattles: s.activeBattles,
       playerCountryId: s.playerCountryId,
       homeCountryId: s.homeCountryId,
       rng: Math.random,
@@ -429,6 +439,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       contestedBy: result.contestedBy,
       lastBattleTick: result.lastBattleTick,
       movements: result.movements,
+      activeBattles: result.activeBattles,
       battleLog,
       battleAnimations,
       arrivalTrails: trails,
@@ -460,6 +471,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         contestedBy: now2.contestedBy,
         lastBattleTick: now2.lastBattleTick,
         movements: now2.movements,
+        activeBattles: now2.activeBattles,
         battleLog: now2.battleLog,
         populations: now2.populations,
         date: now2.date,
@@ -732,6 +744,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       contestedBy: save.contestedBy ?? {},
       lastBattleTick: save.lastBattleTick,
       movements: save.movements,
+      activeBattles: save.activeBattles ?? {},
       battleLog: save.battleLog,
       populations: save.populations ?? get().populations,
       arrivalTrails: [],
@@ -752,6 +765,59 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({ cameraTarget: target, cameraVersion: get().cameraVersion + 1 });
   },
 
+  openBattleHub: (locationId) => {
+    set({ focusedBattleLocationId: locationId });
+  },
+  closeBattleHub: () => {
+    set({ focusedBattleLocationId: null });
+  },
+
+  retreatFromBattle: (locationId) => {
+    const { activeBattles, nations, playerCountryId, contestedBy, control } = get();
+    const battle = activeBattles[locationId];
+    if (!battle) return;
+    if (!playerCountryId || battle.attackerOwnerId !== playerCountryId) return;
+    // 60 % of survivors return to the player's home pool. 40 % lost in retreat.
+    const survivors = battle.attackerForce;
+    const r = 0.6;
+    const returned = {
+      infantry: Math.floor(survivors.infantry * r),
+      cavalry: Math.floor(survivors.cavalry * r),
+      artillery: Math.floor(survivors.artillery * r),
+    };
+    const player = nations[playerCountryId];
+    if (!player) return;
+    const ab = { ...activeBattles };
+    delete ab[locationId];
+    const cb = { ...contestedBy };
+    if (cb[locationId] === playerCountryId) delete cb[locationId];
+    // Bump control regen check by clamping a small recovery so retreat
+    // visibly relieves pressure.
+    const ctl = {
+      ...control,
+      [locationId]: Math.min(
+        100,
+        (control[locationId] ?? 100) + 8,
+      ),
+    };
+    set({
+      activeBattles: ab,
+      contestedBy: cb,
+      control: ctl,
+      focusedBattleLocationId: null,
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...player,
+          infantry: player.infantry + returned.infantry,
+          cavalry: player.cavalry + returned.cavalry,
+          artillery: player.artillery + returned.artillery,
+        },
+      },
+    });
+    playSound('march');
+  },
+
   saveNow: () => {
     const s = get();
     if (!s.gameStarted || !s.playerCountryId) return;
@@ -765,6 +831,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       contestedBy: s.contestedBy,
       lastBattleTick: s.lastBattleTick,
       movements: s.movements,
+      activeBattles: s.activeBattles,
       battleLog: s.battleLog,
       populations: s.populations,
       date: s.date,

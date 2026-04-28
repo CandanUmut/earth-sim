@@ -20,6 +20,14 @@ import {
 } from './movement';
 import { resolveBattle, type LossesByType } from './combat';
 import {
+  makeActiveBattle,
+  reinforceActiveBattle,
+  runBattleRound,
+  totalUnits,
+  BALANCE_BATTLE,
+  type ActiveBattle,
+} from './activeBattle';
+import {
   decideAction,
   evaluateAllianceProposal,
   evaluatePeaceProposal,
@@ -107,6 +115,7 @@ export type TickInput = {
   lastBattleTick: Record<string, number>;
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
+  activeBattles: Record<string, ActiveBattle>;
   playerCountryId: string | null;
   homeCountryId: string | null;
   rng: () => number;
@@ -122,6 +131,7 @@ export type TickOutput = {
   lastBattleTick: Record<string, number>;
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
+  activeBattles: Record<string, ActiveBattle>;
   newBattles: BattleLogEntry[];
   newArrivals: ArrivalEvent[];
   victory: VictoryState;
@@ -377,6 +387,7 @@ function processMovements(input: {
   contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
+  activeBattles: Record<string, ActiveBattle>;
   tickCount: number;
   rng: () => number;
   now: number;
@@ -387,6 +398,7 @@ function processMovements(input: {
   contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
+  activeBattles: Record<string, ActiveBattle>;
   battles: BattleLogEntry[];
   arrivals: ArrivalEvent[];
 } {
@@ -396,6 +408,7 @@ function processMovements(input: {
   let control = { ...input.control };
   let contestedBy = { ...input.contestedBy };
   let lastBattleTick = { ...input.lastBattleTick };
+  let activeBattles = { ...input.activeBattles };
   const battles: BattleLogEntry[] = [];
   const arrivals: ArrivalEvent[] = [];
   const stillMoving: TroopMovement[] = [];
@@ -413,6 +426,9 @@ function processMovements(input: {
     const ownerOfDest = ownership[destId];
 
     if (ownerOfDest === arrival.ownerId) {
+      // Friendly arrival: reinforce home pool, top up control, optionally
+      // join an in-progress defender's battle (no — only same-owner = home;
+      // the battle phase reads defender from the nation pool already).
       const ownerNation = nations[arrival.ownerId];
       if (ownerNation) {
         nations = {
@@ -448,6 +464,7 @@ function processMovements(input: {
       continue;
     }
 
+    // Enemy arrival.
     const defenderOwnerId = ownerOfDest;
     const defenderNation = defenderOwnerId
       ? nations[defenderOwnerId]
@@ -455,79 +472,523 @@ function processMovements(input: {
     const attackerNation = nations[arrival.ownerId];
     if (!attackerNation) continue;
 
-    const attackerSide = {
-      ...arrival.composition,
-      tech: attackerNation.tech,
-      unlockedTech: attackerNation.unlockedTech,
-    };
-    const defenderSide = defenderNation
-      ? {
-          ...asComposition(defenderNation),
-          tech: defenderNation.tech,
-          unlockedTech: defenderNation.unlockedTech,
+    // Mark the war (both sides know).
+    if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
+      nations = setMutualStance(
+        nations,
+        arrival.ownerId,
+        defenderOwnerId,
+        'war',
+      );
+    }
+
+    const defenderTotal = defenderNation
+      ? defenderNation.infantry +
+        defenderNation.cavalry +
+        defenderNation.artillery
+      : 0;
+
+    // Existing battle at this location?
+    const existing = activeBattles[destId];
+
+    if (existing && existing.attackerOwnerId === arrival.ownerId) {
+      // Same attacker — reinforce.
+      activeBattles = {
+        ...activeBattles,
+        [destId]: reinforceActiveBattle(existing, arrival.composition),
+      };
+      arrivals.push({
+        movementId: arrival.id,
+        ownerId: arrival.ownerId,
+        fromId: arrival.fromId,
+        toId: destId,
+        troops: arrival.troops,
+        path: arrival.path,
+        arrivedAt: now,
+        outcome: 'partial',
+      });
+      continue;
+    }
+
+    if (defenderTotal === 0 && (!existing || existing.attackerOwnerId === arrival.ownerId)) {
+      // No defender left — this is occupation, not a battle.
+      ownership = { ...ownership, [destId]: arrival.ownerId };
+      control = { ...control, [destId]: BALANCE_CONTROL.fullControl };
+      const cleared = { ...contestedBy };
+      delete cleared[destId];
+      contestedBy = cleared;
+      // Reabsorb attacker survivors into home pool.
+      const refreshed = nations[arrival.ownerId];
+      if (refreshed) {
+        nations = {
+          ...nations,
+          [arrival.ownerId]: addCompositionsToNation(
+            refreshed,
+            arrival.composition,
+          ),
+        };
+      }
+      // Wipe the defender if they have no other tile.
+      if (defenderOwnerId) {
+        const stillOwnsAnything = Object.values(ownership).some(
+          (o) => o === defenderOwnerId,
+        );
+        if (!stillOwnsAnything) {
+          const def = nations[defenderOwnerId];
+          if (def) {
+            nations = {
+              ...nations,
+              [defenderOwnerId]: {
+                ...def,
+                gold: 0,
+                infantry: 0,
+                cavalry: 0,
+                artillery: 0,
+              },
+            };
+          }
         }
-      : { infantry: 0, cavalry: 0, artillery: 0, tech: 1 };
+      }
+      lastBattleTick = { ...lastBattleTick, [destId]: tickCount };
+      battles.push({
+        id: newBattleId(),
+        tick: tickCount,
+        attackerOwnerId: arrival.ownerId,
+        defenderOwnerId: defenderOwnerId ?? destId,
+        countryId: destId,
+        attackerLosses: { infantry: 0, cavalry: 0, artillery: 0 },
+        defenderLosses: { infantry: 0, cavalry: 0, artillery: 0 },
+        totalAttackerLosses: 0,
+        totalDefenderLosses: 0,
+        attackerTroopsBefore: arrival.troops,
+        defenderTroopsBefore: 0,
+        attackerWon: true,
+        conquered: true,
+        controlAfter: 0,
+      });
+      arrivals.push({
+        movementId: arrival.id,
+        ownerId: arrival.ownerId,
+        fromId: arrival.fromId,
+        toId: destId,
+        troops: arrival.troops,
+        path: arrival.path,
+        arrivedAt: now,
+        outcome: 'won',
+      });
+      continue;
+    }
 
-    const result = resolveBattle(
-      attackerSide,
-      defenderSide,
-      destCountry,
-      destCountry.specializations,
+    if (existing && existing.attackerOwnerId !== arrival.ownerId) {
+      // Third-party attacker arriving on someone else's contested tile.
+      // Fall back to legacy single-shot resolution against the defender,
+      // and DO NOT touch the existing battle.
+      const attackerSide = {
+        ...arrival.composition,
+        tech: attackerNation.tech,
+        unlockedTech: attackerNation.unlockedTech,
+      };
+      const defenderSide = defenderNation
+        ? {
+            ...asComposition(defenderNation),
+            tech: defenderNation.tech,
+            unlockedTech: defenderNation.unlockedTech,
+          }
+        : { infantry: 0, cavalry: 0, artillery: 0, tech: 1 };
+      const r = resolveBattle(
+        attackerSide,
+        defenderSide,
+        destCountry,
+        destCountry.specializations,
+        rng,
+      );
+      if (defenderOwnerId && defenderNation) {
+        nations = {
+          ...nations,
+          [defenderOwnerId]: subtractLossesFromNation(
+            defenderNation,
+            r.defenderLosses,
+          ),
+        };
+      }
+      lastBattleTick = { ...lastBattleTick, [destId]: tickCount };
+      battles.push({
+        id: newBattleId(),
+        tick: tickCount,
+        attackerOwnerId: arrival.ownerId,
+        defenderOwnerId: defenderOwnerId ?? destId,
+        countryId: destId,
+        attackerLosses: r.attackerLosses,
+        defenderLosses: r.defenderLosses,
+        totalAttackerLosses: r.totalAttackerLosses,
+        totalDefenderLosses: r.totalDefenderLosses,
+        attackerTroopsBefore: arrival.troops,
+        defenderTroopsBefore: defenderTotal,
+        attackerWon: r.attackerWon,
+        conquered: false,
+        controlAfter: Math.round(control[destId] ?? BALANCE_CONTROL.fullControl),
+      });
+      arrivals.push({
+        movementId: arrival.id,
+        ownerId: arrival.ownerId,
+        fromId: arrival.fromId,
+        toId: destId,
+        troops: arrival.troops,
+        path: arrival.path,
+        arrivedAt: now,
+        outcome: r.attackerWon ? 'partial' : 'lost',
+      });
+      continue;
+    }
+
+    // Otherwise: spawn a new active battle here.
+    const newBattle = makeActiveBattle({
+      locationCountryId: destId,
+      attackerOwnerId: arrival.ownerId,
+      defenderOwnerId: defenderOwnerId ?? destId,
+      initialAttackerForce: arrival.composition,
+      attackerTech: attackerNation.tech,
+      attackerUnlockedTech: attackerNation.unlockedTech,
+      tickCount,
+    });
+    activeBattles = { ...activeBattles, [destId]: newBattle };
+    contestedBy = { ...contestedBy, [destId]: arrival.ownerId };
+    arrivals.push({
+      movementId: arrival.id,
+      ownerId: arrival.ownerId,
+      fromId: arrival.fromId,
+      toId: destId,
+      troops: arrival.troops,
+      path: arrival.path,
+      arrivedAt: now,
+      outcome: 'partial',
+    });
+  }
+
+  return {
+    ownership,
+    nations,
+    control,
+    contestedBy,
+    lastBattleTick,
+    movements: stillMoving,
+    activeBattles,
+    battles,
+    arrivals,
+  };
+}
+
+/** Run one round of every active battle. End battles that resolve. */
+function processActiveBattlesRound(input: {
+  countries: Record<string, Country>;
+  ownership: Record<string, string>;
+  nations: Record<string, Nation>;
+  control: Record<string, number>;
+  contestedBy: Record<string, string>;
+  lastBattleTick: Record<string, number>;
+  activeBattles: Record<string, ActiveBattle>;
+  tickCount: number;
+  rng: () => number;
+}): {
+  ownership: Record<string, string>;
+  nations: Record<string, Nation>;
+  control: Record<string, number>;
+  contestedBy: Record<string, string>;
+  lastBattleTick: Record<string, number>;
+  activeBattles: Record<string, ActiveBattle>;
+  battles: BattleLogEntry[];
+} {
+  let ownership = { ...input.ownership };
+  let nations = { ...input.nations };
+  let control = { ...input.control };
+  let contestedBy = { ...input.contestedBy };
+  let lastBattleTick = { ...input.lastBattleTick };
+  let activeBattles = { ...input.activeBattles };
+  const { countries, tickCount, rng } = input;
+  const battles: BattleLogEntry[] = [];
+
+  for (const locId of Object.keys(activeBattles)) {
+    const battle = activeBattles[locId];
+    if (!battle) continue;
+    const country = countries[locId];
+    if (!country) continue;
+    const defenderOwnerId = ownership[locId] ?? battle.defenderOwnerId;
+    const defenderNation = nations[defenderOwnerId];
+    const defenderForce = defenderNation
+      ? asComposition(defenderNation)
+      : { infantry: 0, cavalry: 0, artillery: 0 };
+    const defenderTech = defenderNation?.tech ?? 1;
+    const defenderUnlockedTech = defenderNation?.unlockedTech ?? [];
+
+    // If either side has 0 troops the battle short-circuits.
+    const attackerTotalNow = totalUnits(battle.attackerForce);
+    const defenderTotalNow = totalUnits(defenderForce);
+
+    if (attackerTotalNow === 0) {
+      // Attacker wiped — defender holds. Battle ends.
+      const ab = { ...activeBattles };
+      delete ab[locId];
+      activeBattles = ab;
+      battles.push({
+        id: newBattleId(),
+        tick: tickCount,
+        attackerOwnerId: battle.attackerOwnerId,
+        defenderOwnerId,
+        countryId: locId,
+        attackerLosses: { infantry: 0, cavalry: 0, artillery: 0 },
+        defenderLosses: { infantry: 0, cavalry: 0, artillery: 0 },
+        totalAttackerLosses: battle.totalAttackerLosses,
+        totalDefenderLosses: battle.totalDefenderLosses,
+        attackerTroopsBefore: 0,
+        defenderTroopsBefore: defenderTotalNow,
+        attackerWon: false,
+        conquered: false,
+        controlAfter: Math.round(control[locId] ?? BALANCE_CONTROL.fullControl),
+      });
+      lastBattleTick = { ...lastBattleTick, [locId]: tickCount };
+      continue;
+    }
+    if (defenderTotalNow === 0) {
+      // Defender wiped at this tile — attacker grinds control without resistance.
+      const damage =
+        BALANCE_BATTLE.controlDamagePerWonRound.min +
+        rng() *
+          (BALANCE_BATTLE.controlDamagePerWonRound.max -
+            BALANCE_BATTLE.controlDamagePerWonRound.min);
+      const before = control[locId] ?? BALANCE_CONTROL.fullControl;
+      const after = Math.max(0, before - damage * 1.4);
+      control = { ...control, [locId]: after };
+      contestedBy = { ...contestedBy, [locId]: battle.attackerOwnerId };
+      if (after <= 0) {
+        // Conquest.
+        ownership = { ...ownership, [locId]: battle.attackerOwnerId };
+        control = { ...control, [locId]: BALANCE_CONTROL.fullControl };
+        const cleared = { ...contestedBy };
+        delete cleared[locId];
+        contestedBy = cleared;
+        const refreshed = nations[battle.attackerOwnerId];
+        if (refreshed) {
+          nations = {
+            ...nations,
+            [battle.attackerOwnerId]: addCompositionsToNation(
+              refreshed,
+              battle.attackerForce,
+            ),
+          };
+        }
+        // Wipe defender nation if they have no tiles.
+        if (defenderOwnerId) {
+          const stillOwnsAnything = Object.values(ownership).some(
+            (o) => o === defenderOwnerId,
+          );
+          if (!stillOwnsAnything) {
+            const def = nations[defenderOwnerId];
+            if (def) {
+              nations = {
+                ...nations,
+                [defenderOwnerId]: {
+                  ...def,
+                  gold: 0,
+                  infantry: 0,
+                  cavalry: 0,
+                  artillery: 0,
+                },
+              };
+            }
+          }
+        }
+        const ab = { ...activeBattles };
+        delete ab[locId];
+        activeBattles = ab;
+        battles.push({
+          id: newBattleId(),
+          tick: tickCount,
+          attackerOwnerId: battle.attackerOwnerId,
+          defenderOwnerId,
+          countryId: locId,
+          attackerLosses: { infantry: 0, cavalry: 0, artillery: 0 },
+          defenderLosses: { infantry: 0, cavalry: 0, artillery: 0 },
+          totalAttackerLosses: battle.totalAttackerLosses,
+          totalDefenderLosses: battle.totalDefenderLosses,
+          attackerTroopsBefore: totalUnits(battle.attackerForce),
+          defenderTroopsBefore: 0,
+          attackerWon: true,
+          conquered: true,
+          controlAfter: 0,
+        });
+      } else {
+        activeBattles = {
+          ...activeBattles,
+          [locId]: { ...battle, rounds: battle.rounds + 1 },
+        };
+      }
+      lastBattleTick = { ...lastBattleTick, [locId]: tickCount };
+      continue;
+    }
+
+    // Run one round.
+    const initialSnapshot = totalUnits(battle.attackerForce);
+    const round = runBattleRound({
+      battle,
+      defenderForce,
+      defenderTech,
+      defenderUnlockedTech,
+      defenderCountry: country,
+      defenderSpecs: country.specializations,
+      initialAttackerStrengthSnapshot: initialSnapshot,
       rng,
-    );
+    });
 
-    if (defenderOwnerId && defenderNation) {
+    // Apply attacker losses to battle force.
+    const newAttackerForce = {
+      infantry: Math.max(
+        0,
+        battle.attackerForce.infantry - round.attackerLosses.infantry,
+      ),
+      cavalry: Math.max(
+        0,
+        battle.attackerForce.cavalry - round.attackerLosses.cavalry,
+      ),
+      artillery: Math.max(
+        0,
+        battle.attackerForce.artillery - round.attackerLosses.artillery,
+      ),
+    };
+    // Apply defender losses to defender nation pool directly.
+    if (defenderNation) {
       nations = {
         ...nations,
         [defenderOwnerId]: subtractLossesFromNation(
           defenderNation,
-          result.defenderLosses,
+          round.defenderLosses,
         ),
       };
     }
+    const totalAttackerLossesThisRound =
+      round.attackerLosses.infantry +
+      round.attackerLosses.cavalry +
+      round.attackerLosses.artillery;
+    const totalDefenderLossesThisRound =
+      round.defenderLosses.infantry +
+      round.defenderLosses.cavalry +
+      round.defenderLosses.artillery;
 
-    let conquered = false;
-    let controlAfter = control[destId] ?? BALANCE_CONTROL.fullControl;
-    let outcome: 'won' | 'lost' | 'partial' = 'lost';
+    let updated: ActiveBattle = {
+      ...battle,
+      attackerForce: newAttackerForce,
+      rounds: battle.rounds + 1,
+      totalAttackerLosses:
+        battle.totalAttackerLosses + totalAttackerLossesThisRound,
+      totalDefenderLosses:
+        battle.totalDefenderLosses + totalDefenderLossesThisRound,
+    };
 
-    if (result.attackerWon) {
-      const damage =
-        BALANCE_CONTROL.damagePerVictoryMin +
-        rng() *
-          (BALANCE_CONTROL.damagePerVictoryMax -
-            BALANCE_CONTROL.damagePerVictoryMin);
-      const before = controlAfter;
-      controlAfter = Math.max(0, before - damage);
-      control = { ...control, [destId]: controlAfter };
-      contestedBy = { ...contestedBy, [destId]: arrival.ownerId };
+    // Update control when attacker wins the round.
+    let controlAfter = control[locId] ?? BALANCE_CONTROL.fullControl;
+    if (round.attackerWonRound && round.controlDamage > 0) {
+      controlAfter = Math.max(0, controlAfter - round.controlDamage);
+      control = { ...control, [locId]: controlAfter };
+      contestedBy = { ...contestedBy, [locId]: battle.attackerOwnerId };
+    }
+    lastBattleTick = { ...lastBattleTick, [locId]: tickCount };
 
-      const survivors = result.attackerSurvivors;
-      const refreshedAttacker = nations[arrival.ownerId];
+    const battleIsConquest = controlAfter <= 0;
+    const battleIsRout =
+      round.attackerRouted || totalUnits(newAttackerForce) === 0;
+    const stalled = updated.rounds >= BALANCE_BATTLE.maxRounds;
 
-      if (controlAfter <= 0) {
-        ownership = { ...ownership, [destId]: arrival.ownerId };
-        control = { ...control, [destId]: BALANCE_CONTROL.fullControl };
-        const cleared = { ...contestedBy };
-        delete cleared[destId];
-        contestedBy = cleared;
-        conquered = true;
-        let absorbed: Composition = { ...survivors };
-        if (defenderOwnerId) {
-          const defNow = nations[defenderOwnerId];
-          if (defNow) {
-            absorbed = {
-              infantry: absorbed.infantry + Math.floor(defNow.infantry * 0.3),
-              cavalry: absorbed.cavalry + Math.floor(defNow.cavalry * 0.3),
-              artillery: absorbed.artillery + Math.floor(defNow.artillery * 0.3),
+    const shouldEnd = battleIsConquest || battleIsRout || stalled;
+
+    if (battleIsConquest) {
+      ownership = { ...ownership, [locId]: battle.attackerOwnerId };
+      control = { ...control, [locId]: BALANCE_CONTROL.fullControl };
+      const cleared = { ...contestedBy };
+      delete cleared[locId];
+      contestedBy = cleared;
+      // Reabsorb survivors + 30 % of defender stragglers into attacker home pool.
+      const refreshed = nations[battle.attackerOwnerId];
+      let absorbed: Composition = { ...newAttackerForce };
+      const defNow = nations[defenderOwnerId];
+      if (defNow) {
+        absorbed = {
+          infantry: absorbed.infantry + Math.floor(defNow.infantry * 0.3),
+          cavalry: absorbed.cavalry + Math.floor(defNow.cavalry * 0.3),
+          artillery: absorbed.artillery + Math.floor(defNow.artillery * 0.3),
+        };
+      }
+      if (refreshed) {
+        nations = {
+          ...nations,
+          [battle.attackerOwnerId]: addCompositionsToNation(refreshed, absorbed),
+        };
+      }
+      if (defenderOwnerId) {
+        const stillOwnsAnything = Object.values(ownership).some(
+          (o) => o === defenderOwnerId,
+        );
+        if (!stillOwnsAnything) {
+          const def = nations[defenderOwnerId];
+          if (def) {
+            nations = {
+              ...nations,
+              [defenderOwnerId]: {
+                ...def,
+                gold: 0,
+                infantry: 0,
+                cavalry: 0,
+                artillery: 0,
+              },
             };
           }
         }
-        if (refreshedAttacker) {
+      }
+      const ab = { ...activeBattles };
+      delete ab[locId];
+      activeBattles = ab;
+    } else if (battleIsRout) {
+      // Routed survivors are simply lost (they would have been wiped retreating).
+      const ab = { ...activeBattles };
+      delete ab[locId];
+      activeBattles = ab;
+    } else if (stalled) {
+      // Force a fallback resolution: heavier final round.
+      const final = resolveBattle(
+        {
+          ...newAttackerForce,
+          tech: battle.attackerTech,
+          unlockedTech: battle.attackerUnlockedTech,
+        },
+        {
+          ...defenderForce,
+          tech: defenderTech,
+          unlockedTech: defenderUnlockedTech,
+        },
+        country,
+        country.specializations,
+        rng,
+      );
+      if (defenderNation) {
+        nations = {
+          ...nations,
+          [defenderOwnerId]: subtractLossesFromNation(
+            nations[defenderOwnerId] ?? defenderNation,
+            final.defenderLosses,
+          ),
+        };
+      }
+      if (final.attackerWon) {
+        ownership = { ...ownership, [locId]: battle.attackerOwnerId };
+        control = { ...control, [locId]: BALANCE_CONTROL.fullControl };
+        const cleared = { ...contestedBy };
+        delete cleared[locId];
+        contestedBy = cleared;
+        const refreshed = nations[battle.attackerOwnerId];
+        if (refreshed) {
           nations = {
             ...nations,
-            [arrival.ownerId]: addCompositionsToNation(
-              refreshedAttacker,
-              absorbed,
+            [battle.attackerOwnerId]: addCompositionsToNation(
+              refreshed,
+              final.attackerSurvivors,
             ),
           };
         }
@@ -551,87 +1012,37 @@ function processMovements(input: {
             }
           }
         }
-        if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
-          nations = setMutualStance(
-            nations,
-            arrival.ownerId,
-            defenderOwnerId,
-            'war',
-          );
-        }
-        outcome = 'won';
-      } else {
-        if (refreshedAttacker) {
-          const r = 0.6;
-          const fallback: Composition = {
-            infantry: Math.floor(survivors.infantry * r),
-            cavalry: Math.floor(survivors.cavalry * r),
-            artillery: Math.floor(survivors.artillery * r),
-          };
-          nations = {
-            ...nations,
-            [arrival.ownerId]: addCompositionsToNation(
-              refreshedAttacker,
-              fallback,
-            ),
-          };
-        }
-        if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
-          nations = setMutualStance(
-            nations,
-            arrival.ownerId,
-            defenderOwnerId,
-            'war',
-          );
-        }
-        outcome = 'partial';
       }
+      const ab = { ...activeBattles };
+      delete ab[locId];
+      activeBattles = ab;
     } else {
-      if (defenderOwnerId && defenderOwnerId !== arrival.ownerId) {
-        nations = setMutualStance(
-          nations,
-          arrival.ownerId,
-          defenderOwnerId,
-          'war',
-        );
-      }
-      outcome = 'lost';
+      activeBattles = { ...activeBattles, [locId]: updated };
     }
 
-    lastBattleTick = { ...lastBattleTick, [destId]: tickCount };
-    const attackerTroopsBefore =
-      arrival.composition.infantry +
-      arrival.composition.cavalry +
-      arrival.composition.artillery;
-    const defenderTroopsBefore =
-      (defenderSide.infantry + defenderSide.cavalry + defenderSide.artillery) ||
-      0;
-    battles.push({
-      id: newBattleId(),
-      tick: tickCount,
-      attackerOwnerId: arrival.ownerId,
-      defenderOwnerId: defenderOwnerId ?? destId,
-      countryId: destId,
-      attackerLosses: result.attackerLosses,
-      defenderLosses: result.defenderLosses,
-      totalAttackerLosses: result.totalAttackerLosses,
-      totalDefenderLosses: result.totalDefenderLosses,
-      attackerTroopsBefore,
-      defenderTroopsBefore,
-      attackerWon: result.attackerWon,
-      conquered,
-      controlAfter: Math.round(controlAfter),
-    });
-    arrivals.push({
-      movementId: arrival.id,
-      ownerId: arrival.ownerId,
-      fromId: arrival.fromId,
-      toId: destId,
-      troops: arrival.troops,
-      path: arrival.path,
-      arrivedAt: now,
-      outcome,
-    });
+    if (shouldEnd) {
+      const totalA = totalUnits(battle.attackerForce);
+      const totalD =
+        defenderForce.infantry + defenderForce.cavalry + defenderForce.artillery;
+      battles.push({
+        id: newBattleId(),
+        tick: tickCount,
+        attackerOwnerId: battle.attackerOwnerId,
+        defenderOwnerId,
+        countryId: locId,
+        attackerLosses: round.attackerLosses,
+        defenderLosses: round.defenderLosses,
+        totalAttackerLosses:
+          updated.totalAttackerLosses,
+        totalDefenderLosses:
+          updated.totalDefenderLosses,
+        attackerTroopsBefore: totalA,
+        defenderTroopsBefore: totalD,
+        attackerWon: battleIsConquest || (stalled && !battleIsRout),
+        conquered: battleIsConquest,
+        controlAfter: Math.round(control[locId] ?? BALANCE_CONTROL.fullControl),
+      });
+    }
   }
 
   return {
@@ -640,9 +1051,8 @@ function processMovements(input: {
     control,
     contestedBy,
     lastBattleTick,
-    movements: stillMoving,
+    activeBattles,
     battles,
-    arrivals,
   };
 }
 
@@ -807,6 +1217,7 @@ export function runTick(input: TickInput): TickOutput {
     contestedBy: input.contestedBy,
     lastBattleTick: input.lastBattleTick,
     movements: input.movements,
+    activeBattles: input.activeBattles,
     tickCount: input.tickCount,
     rng: input.rng,
     now,
@@ -817,6 +1228,28 @@ export function runTick(input: TickInput): TickOutput {
   let control = moveStep.control;
   let contestedBy = moveStep.contestedBy;
   let lastBattleTick = moveStep.lastBattleTick;
+  let activeBattles = moveStep.activeBattles;
+  const allBattleEntries: BattleLogEntry[] = [...moveStep.battles];
+
+  // Active-battle rounds (one round per tick).
+  const battleStep = processActiveBattlesRound({
+    countries: input.countries,
+    ownership,
+    nations,
+    control,
+    contestedBy,
+    lastBattleTick,
+    activeBattles,
+    tickCount: input.tickCount,
+    rng: input.rng,
+  });
+  ownership = battleStep.ownership;
+  nations = battleStep.nations;
+  control = battleStep.control;
+  contestedBy = battleStep.contestedBy;
+  lastBattleTick = battleStep.lastBattleTick;
+  activeBattles = battleStep.activeBattles;
+  allBattleEntries.push(...battleStep.battles);
 
   const regen = regenerateControl(
     control,
@@ -881,7 +1314,8 @@ export function runTick(input: TickInput): TickOutput {
     lastBattleTick,
     brains,
     movements,
-    newBattles: moveStep.battles,
+    activeBattles,
+    newBattles: allBattleEntries,
     newArrivals: moveStep.arrivals,
     victory,
   };

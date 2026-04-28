@@ -3,6 +3,7 @@ import type { GameDate, BattleLogEntry } from '../game/tick';
 import type { TroopMovement } from '../game/movement';
 import type { AIBrain } from '../game/ai';
 import type { VictoryState } from '../game/victory';
+import type { ActiveBattle } from '../game/activeBattle';
 
 const SAVE_KEY = 'terra-bellum-save-v4';
 const TUTORIAL_KEY = 'terra-bellum-tutorial-seen-v2';
@@ -17,6 +18,7 @@ export type SavePayload = {
   contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
+  activeBattles: Record<string, ActiveBattle>;
   battleLog: BattleLogEntry[];
   populations: Record<string, number>;
   date: GameDate;
@@ -56,6 +58,7 @@ export function readSave(): SavePayload | null {
         (n as { barracksLevel: number }).barracksLevel = 1;
       }
     }
+    if (!parsed.activeBattles) parsed.activeBattles = {};
     return parsed;
   } catch {
     return null;

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { Pause, Play, Volume2, VolumeX, GraduationCap } from 'lucide-react';
 import { useGameStore, type Speed } from '../store/gameStore';
 import { formatDate } from '../game/tick';
 import { isMuted, setMuted } from '../sound/sound';
+
+const TUTORIAL_KEY = 'terra-bellum-tutorial-seen-v2';
 
 export default function TimeControls() {
   const paused = useGameStore((s) => s.paused);
@@ -142,6 +144,34 @@ export default function TimeControls() {
         }}
       >
         {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          try {
+            localStorage.removeItem(TUTORIAL_KEY);
+          } catch {
+            // ignore
+          }
+          // Force a re-render; Tutorial reads its open state from gameStarted
+          // and the localStorage flag, so we toggle pause to refresh.
+          window.location.reload();
+        }}
+        aria-label="Replay tutorial"
+        title="Replay tutorial"
+        style={{
+          width: 32,
+          height: 32,
+          display: 'grid',
+          placeItems: 'center',
+          background: 'transparent',
+          color: 'var(--ink)',
+          border: '1px solid var(--ink)',
+          cursor: 'pointer',
+        }}
+      >
+        <GraduationCap size={14} />
       </button>
     </div>
   );

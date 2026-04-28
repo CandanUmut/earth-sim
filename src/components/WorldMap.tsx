@@ -51,9 +51,13 @@ export default function WorldMap() {
   const selectedId = useGameStore((s) => s.selectedCountryId);
   const hoveredId = useGameStore((s) => s.hoveredCountryId);
 
+  const cameraTarget = useGameStore((s) => s.cameraTarget);
+  const cameraVersion = useGameStore((s) => s.cameraVersion);
+
   const svgRef = useRef<SVGSVGElement | null>(null);
   const gRef = useRef<SVGGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
 
   const { w, h } = useWindowSize();
 
@@ -87,6 +91,7 @@ export default function WorldMap() {
         gSel.attr('transform', event.transform.toString());
       });
     sel.call(zoom);
+    zoomRef.current = zoom;
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -121,6 +126,35 @@ export default function WorldMap() {
       svgEl.removeEventListener('wheel', onWheel);
     };
   }, [w, h]);
+
+  // External camera target (driven by tutorial / future smart-zoom). Smoothly
+  // pan + scale to a country, or reset to identity.
+  useEffect(() => {
+    if (!cameraTarget) return;
+    if (!svgRef.current || !zoomRef.current || !pathD) return;
+    const svgEl = svgRef.current;
+    const zoom = zoomRef.current;
+    const sel = d3.select(svgEl);
+    if (cameraTarget.kind === 'reset') {
+      sel
+        .transition()
+        .duration(700)
+        .call(zoom.transform, d3.zoomIdentity);
+      return;
+    }
+    const country = countries[cameraTarget.countryId];
+    if (!country) return;
+    const projected = pathD.projection(country.centroid);
+    if (!projected || !Number.isFinite(projected[0]) || !Number.isFinite(projected[1])) return;
+    const k = cameraTarget.scale;
+    const tx = w / 2 - projected[0] * k;
+    const ty = h / 2 - projected[1] * k;
+    sel
+      .transition()
+      .duration(900)
+      .ease(d3.easeCubicInOut)
+      .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
+  }, [cameraVersion, cameraTarget, countries, pathD, w, h]);
 
   // Per-country fill + stripe overlay updates on ownership / stance / player change.
   useEffect(() => {

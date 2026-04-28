@@ -1,87 +1,277 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X } from 'lucide-react';
-import { useGameStore } from '../store/gameStore';
+import { X, ChevronRight, Check } from 'lucide-react';
+import { useGameStore, type GameState } from '../store/gameStore';
 import { hasSeenTutorial, markTutorialSeen } from '../store/persistence';
 
-const STEPS = [
+/**
+ * Each step describes:
+ *  - what to say
+ *  - where the panel anchors on screen
+ *  - whether to zoom the map to a particular country
+ *  - a `gate` function: returns true once the player has done the action
+ *    (or `null` if the step is informational and advances on click).
+ */
+type StepAnchor =
+  | { type: 'center' }
+  | { type: 'left'; top?: number }
+  | { type: 'right'; top?: number }
+  | { type: 'bottom-center' }
+  | { type: 'top-center' };
+
+type Step = {
+  title: string;
+  body: string;
+  anchor: StepAnchor;
+  cameraScale?: number;
+  /** If null, advance is manual. Else, advance when this returns true. */
+  gate: ((s: GameState, snap: GateSnapshot) => boolean) | null;
+  hint?: string;
+};
+
+type GateSnapshot = {
+  startInfantry: number;
+  startCavalry: number;
+  startArtillery: number;
+  startGold: number;
+  startSelectedNonPlayer: string | null;
+};
+
+const STEPS: Step[] = [
   {
-    title: 'Pause and pace',
+    title: 'Welcome, Cartographer',
     body:
-      'Press Space to pause. Use the 1× / 2× / 3× buttons at the bottom to set the simulation speed. The world keeps turning whether or not you act.',
-    anchor: { bottom: 70, left: '50%', translateX: '-50%' as const },
+      'Your campaign begins. The world keeps turning whether you act or not. Take a moment — let me show you the controls before the simulation continues.',
+    anchor: { type: 'center' },
+    gate: null,
   },
   {
-    title: 'Inspect any nation',
+    title: 'This is your nation',
     body:
-      'Click a country on the map to see its troops, terrain, and stance toward you. Country labels and troop counts are visible at all times.',
-    anchor: { top: 90, right: 350 },
+      'I have zoomed the map to your home country. Click it on the map to inspect your own realm.',
+    anchor: { type: 'left', top: 360 },
+    cameraScale: 4.5,
+    gate: (s) => s.selectedCountryId === s.playerCountryId,
+    hint: 'Click your golden territory.',
   },
   {
-    title: 'Mobilize and negotiate',
+    title: 'Build your army',
     body:
-      'In a country\'s panel, Send Troops launches an attack along the shortest land route. Or Declare War, Propose Alliance, or Send a Gift to shift the diplomatic field.',
-    anchor: { top: 90, right: 16 },
+      'Recruit at least 25 infantry from the HUD on the left. Use the +25 button. Each barracks upgrade unlocks larger batches and reduces the per-unit cost.',
+    anchor: { type: 'left', top: 360 },
+    gate: (s, snap) => {
+      const id = s.playerCountryId;
+      if (!id) return false;
+      const n = s.nations[id];
+      if (!n) return false;
+      return (
+        n.infantry + n.cavalry + n.artillery >=
+        snap.startInfantry + snap.startCavalry + snap.startArtillery + 25
+      );
+    },
+    hint: 'Press the +25 button under Infantry on the HUD.',
   },
   {
-    title: 'Wear them down',
+    title: 'Pick a target',
     body:
-      'Conquering a country takes more than one battle: each won fight chips away its control bar. When control hits zero, the territory flips to your color.',
-    anchor: { bottom: 70, left: 16 },
+      'Click any country other than your own to inspect it. Look for a weaker neighbor to start with.',
+    anchor: { type: 'right', top: 90 },
+    gate: (s) =>
+      s.selectedCountryId !== null &&
+      s.selectedCountryId !== s.playerCountryId,
+    hint: 'Click any non-golden country on the map.',
+  },
+  {
+    title: 'Mobilize the realm',
+    body:
+      'Open the Send Troops dialog from the country panel on the right. You will see travel time, terrain bonuses, and a battle preview before committing.',
+    anchor: { type: 'right', top: 240 },
+    gate: (s) => s.dispatchTargetId !== null,
+    hint: 'Press "Send Troops" in the country panel.',
+  },
+  {
+    title: 'Conquering takes time',
+    body:
+      'Conquering a tile takes more than one battle — each victory chips away its control bar. When control hits zero, the territory flips to your color. Empires now display ONE label per contiguous region.',
+    anchor: { type: 'center' },
+    gate: null,
+  },
+  {
+    title: 'Statecraft & Tech',
+    body:
+      'Diplomacy and the Tech Tree are how clever players win. Try the Tech button on the HUD and read a few unlocks. Win = control 60% of world population.',
+    anchor: { type: 'left', top: 460 },
+    gate: (s) => s.techPanelOpen,
+    hint: 'Click the gold "Tech" button on the HUD.',
+  },
+  {
+    title: 'You are ready',
+    body:
+      'I will resume the simulation. Spacebar pauses any time. Good luck — the world will not wait.',
+    anchor: { type: 'center' },
+    gate: null,
   },
 ];
 
+function anchorStyle(a: StepAnchor): React.CSSProperties {
+  switch (a.type) {
+    case 'center':
+      return {
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+      };
+    case 'left':
+      return {
+        top: a.top ?? 360,
+        left: 350,
+      };
+    case 'right':
+      return {
+        top: a.top ?? 90,
+        right: 350,
+      };
+    case 'bottom-center':
+      return {
+        bottom: 70,
+        left: '50%',
+        transform: 'translateX(-50%)',
+      };
+    case 'top-center':
+      return {
+        top: 90,
+        left: '50%',
+        transform: 'translateX(-50%)',
+      };
+  }
+}
+
 export default function Tutorial() {
   const gameStarted = useGameStore((s) => s.gameStarted);
+  const playerId = useGameStore((s) => s.playerCountryId);
+  const setPaused = useGameStore((s) => s.setPaused);
+  const setCameraTarget = useGameStore((s) => s.setCameraTarget);
+
   const [step, setStep] = useState(0);
   const [open, setOpen] = useState(false);
+  const snapRef = useRef<GateSnapshot | null>(null);
+  const wasPausedRef = useRef<boolean>(false);
 
+  // Open on game start if not seen, snapshot starting numbers.
   useEffect(() => {
-    if (gameStarted && !hasSeenTutorial()) {
-      setOpen(true);
+    if (!gameStarted) return;
+    if (hasSeenTutorial()) return;
+    setOpen(true);
+    setStep(0);
+    const s = useGameStore.getState();
+    wasPausedRef.current = s.paused;
+    setPaused(true);
+    if (playerId) {
+      const n = s.nations[playerId];
+      snapRef.current = {
+        startInfantry: n?.infantry ?? 0,
+        startCavalry: n?.cavalry ?? 0,
+        startArtillery: n?.artillery ?? 0,
+        startGold: n?.gold ?? 0,
+        startSelectedNonPlayer: null,
+      };
     }
-  }, [gameStarted]);
+  }, [gameStarted, playerId, setPaused]);
+
+  // Camera + snapshot refresh on step change. Re-snapshot for "build army"
+  // and "click neighbor" so the gate measures from THIS step's start.
+  useEffect(() => {
+    if (!open) return;
+    const s = useGameStore.getState();
+    if (playerId) {
+      const n = s.nations[playerId];
+      snapRef.current = {
+        startInfantry: n?.infantry ?? 0,
+        startCavalry: n?.cavalry ?? 0,
+        startArtillery: n?.artillery ?? 0,
+        startGold: n?.gold ?? 0,
+        startSelectedNonPlayer: null,
+      };
+    }
+    const cur = STEPS[step];
+    if (!cur) return;
+    if (cur.cameraScale && playerId) {
+      setCameraTarget({
+        kind: 'country',
+        countryId: playerId,
+        scale: cur.cameraScale,
+      });
+    } else if (step === 0) {
+      setCameraTarget({ kind: 'reset' });
+    }
+  }, [step, open, playerId, setCameraTarget]);
+
+  // Watch the store and auto-advance once the gate succeeds.
+  useEffect(() => {
+    if (!open) return;
+    const cur = STEPS[step];
+    if (!cur || !cur.gate) return;
+    let advanced = false;
+    const tryAdvance = (state: GameState) => {
+      if (advanced) return;
+      const snap = snapRef.current;
+      if (!snap) return;
+      if (cur.gate && cur.gate(state, snap)) {
+        advanced = true;
+        setStep((s) => Math.min(STEPS.length - 1, s + 1));
+      }
+    };
+    // Immediate check (handles the case where the action already happened).
+    tryAdvance(useGameStore.getState());
+    const unsub = useGameStore.subscribe(tryAdvance);
+    return () => {
+      unsub();
+    };
+  }, [step, open]);
 
   const dismiss = () => {
     setOpen(false);
     markTutorialSeen();
+    setCameraTarget({ kind: 'reset' });
+    setPaused(wasPausedRef.current);
   };
 
-  if (!gameStarted) return null;
-
+  if (!gameStarted || !open) return null;
   const cur = STEPS[step];
-  const total = STEPS.length;
+  if (!cur) return null;
 
-  const placement = cur?.anchor ?? {};
-  const style: React.CSSProperties = {
-    position: 'absolute',
-    background: 'var(--paper)',
-    border: '1px solid var(--ink)',
-    boxShadow: '0 8px 24px rgba(26,24,20,0.18)',
-    padding: '14px 18px 16px',
-    width: 320,
-    zIndex: 45,
-    transform:
-      'translateX' in placement
-        ? `translateX(${(placement as { translateX?: string }).translateX ?? '0'})`
-        : undefined,
-  };
-
-  if ('top' in placement) style.top = (placement as { top?: number | string }).top;
-  if ('bottom' in placement) style.bottom = (placement as { bottom?: number | string }).bottom;
-  if ('left' in placement) style.left = (placement as { left?: number | string }).left;
-  if ('right' in placement) style.right = (placement as { right?: number | string }).right;
+  const isLast = step === STEPS.length - 1;
+  const canManuallyAdvance = cur.gate === null;
 
   return (
-    <AnimatePresence>
-      {open && cur && (
+    <>
+      {/* Soft dim overlay (does not block clicks — tutorial expects map use). */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(26,24,20,0.18)',
+          pointerEvents: 'none',
+          zIndex: 44,
+        }}
+      />
+      <AnimatePresence mode="wait">
         <motion.div
           key={`tut-${step}`}
-          initial={{ opacity: 0, scale: 0.96 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.97 }}
+          initial={{ opacity: 0, y: 6, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.98 }}
           transition={{ duration: 0.22 }}
-          style={style}
+          style={{
+            position: 'absolute',
+            background: 'var(--paper)',
+            border: '1px solid var(--ink)',
+            boxShadow: '0 12px 30px rgba(26,24,20,0.32)',
+            padding: '16px 20px 18px',
+            width: 360,
+            zIndex: 46,
+            ...anchorStyle(cur.anchor),
+          }}
         >
           <button
             type="button"
@@ -89,8 +279,8 @@ export default function Tutorial() {
             onClick={dismiss}
             style={{
               position: 'absolute',
-              top: 6,
-              right: 6,
+              top: 8,
+              right: 8,
               background: 'transparent',
               border: 'none',
               color: 'var(--ink-faded)',
@@ -106,70 +296,118 @@ export default function Tutorial() {
               letterSpacing: '0.16em',
               textTransform: 'uppercase',
               color: 'var(--ink-faded)',
-              marginBottom: 6,
+              marginBottom: 4,
             }}
           >
-            {step + 1} / {total} · {cur.title}
+            {step + 1} / {STEPS.length} · Campaign Briefing
           </div>
-          <div style={{ fontSize: 14, lineHeight: 1.45, marginBottom: 14 }}>
+          <div
+            className="display"
+            style={{
+              fontSize: 22,
+              lineHeight: 1.1,
+              marginBottom: 8,
+              paddingRight: 18,
+            }}
+          >
+            {cur.title}
+          </div>
+          <div
+            style={{
+              fontSize: 14,
+              lineHeight: 1.45,
+              marginBottom: 14,
+              color: 'var(--ink)',
+            }}
+          >
             {cur.body}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {step > 0 && (
-              <button
-                type="button"
-                onClick={() => setStep((s) => Math.max(0, s - 1))}
+          {!canManuallyAdvance && cur.hint && (
+            <div
+              style={{
+                fontSize: 12,
+                fontStyle: 'italic',
+                color: 'var(--accent-gold)',
+                marginBottom: 12,
+                paddingLeft: 8,
+                borderLeft: '2px solid var(--accent-gold)',
+              }}
+            >
+              {cur.hint}
+            </div>
+          )}
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+          >
+            <button
+              type="button"
+              onClick={dismiss}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--ink-faded)',
+                fontSize: 11,
+                cursor: 'pointer',
+                fontStyle: 'italic',
+              }}
+            >
+              Skip tutorial
+            </button>
+            <div style={{ flex: 1 }} />
+            {!canManuallyAdvance ? (
+              <span
                 style={{
-                  background: 'transparent',
-                  border: '1px solid var(--ink-faded)',
-                  color: 'var(--ink)',
-                  padding: '6px 14px',
-                  fontFamily: '"Crimson Pro", serif',
-                  fontSize: 13,
-                  cursor: 'pointer',
+                  fontSize: 11,
+                  color: 'var(--ink-faded)',
+                  fontStyle: 'italic',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
                 }}
               >
-                Back
-              </button>
-            )}
-            {step < total - 1 ? (
-              <button
+                <Check size={12} /> Waiting for action…
+              </span>
+            ) : isLast ? (
+              <motion.button
                 type="button"
-                onClick={() => setStep((s) => Math.min(total - 1, s + 1))}
-                style={{
-                  background: 'var(--ink)',
-                  color: 'var(--paper)',
-                  border: '1px solid var(--ink)',
-                  padding: '6px 14px',
-                  fontFamily: '"Crimson Pro", serif',
-                  fontSize: 13,
-                  cursor: 'pointer',
-                  marginLeft: 'auto',
-                }}
-              >
-                Next
-              </button>
-            ) : (
-              <button
-                type="button"
+                whileTap={{ scale: 0.95 }}
                 onClick={dismiss}
                 style={{
+                  background: 'var(--accent-gold)',
+                  color: 'var(--paper)',
+                  border: '1px solid var(--accent-gold)',
+                  padding: '6px 14px',
+                  fontFamily: '"Crimson Pro", serif',
+                  fontSize: 14,
+                  cursor: 'pointer',
+                }}
+              >
+                Begin Campaign
+              </motion.button>
+            ) : (
+              <motion.button
+                type="button"
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
+                style={{
                   background: 'var(--ink)',
                   color: 'var(--paper)',
                   border: '1px solid var(--ink)',
                   padding: '6px 14px',
                   fontFamily: '"Crimson Pro", serif',
-                  fontSize: 13,
+                  fontSize: 14,
                   cursor: 'pointer',
-                  marginLeft: 'auto',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
                 }}
               >
-                Begin
-              </button>
+                Next <ChevronRight size={14} />
+              </motion.button>
             )}
           </div>
         </motion.div>
-      )}
-    </AnimatePresence>
+      </AnimatePresence>
+    </>
   );
 }

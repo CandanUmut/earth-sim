@@ -52,6 +52,11 @@ import { play as playSound } from '../sound/sound';
 
 export type Speed = 1 | 2 | 3;
 
+export type CameraTarget =
+  | { kind: 'country'; countryId: string; scale: number }
+  | { kind: 'reset' }
+  | null;
+
 export type BattleAnimation = {
   id: string;
   attackerOwnerId: string;
@@ -103,6 +108,10 @@ export type GameState = {
   dispatchTargetId: string | null;
   savedSummary: SaveSummary | null;
   techPanelOpen: boolean;
+  cameraTarget: CameraTarget;
+  /** Bumped each time setCameraTarget runs so WorldMap re-applies even on
+   *  identical target value (e.g. re-snapping back to same country). */
+  cameraVersion: number;
 
   loadInitialWorld: () => Promise<void>;
   setSelected: (id: string | null) => void;
@@ -131,6 +140,7 @@ export type GameState = {
   pruneTrails: () => void;
   resumeCampaign: () => void;
   saveNow: () => void;
+  setCameraTarget: (target: CameraTarget) => void;
 };
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -194,6 +204,8 @@ const initialState = {
   dispatchTargetId: null as string | null,
   savedSummary: null as SaveSummary | null,
   techPanelOpen: false,
+  cameraTarget: null as CameraTarget,
+  cameraVersion: 0,
 };
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -734,6 +746,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       selectedCountryId: null,
     });
     ensureTickInterval(get);
+  },
+
+  setCameraTarget: (target) => {
+    set({ cameraTarget: target, cameraVersion: get().cameraVersion + 1 });
   },
 
   saveNow: () => {

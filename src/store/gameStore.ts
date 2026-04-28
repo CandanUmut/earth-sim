@@ -59,7 +59,11 @@ import {
   summarizeSave,
   type SaveSummary,
 } from './persistence';
-import { play as playSound } from '../sound/sound';
+import {
+  play as playSound,
+  setMusicMode,
+  stopBattleLoop,
+} from '../sound/sound';
 
 export type Speed = 1 | 2 | 3;
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -380,7 +384,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         },
       },
     });
-    playSound('click');
+    playSound('coin');
   },
 
   upgradeBarracks: () => {
@@ -506,8 +510,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       clearTickInterval();
       clearSave();
       set({ savedSummary: null });
-      if (result.victory.kind === 'win') playSound('conquest');
+      if (result.victory.kind === 'win') playSound('victory');
       else playSound('defeat');
+      void setMusicMode(null);
+      stopBattleLoop();
     } else if ((s.tickCount + 1) % 10 === 0) {
       const now2 = get();
       writeSave({
@@ -953,7 +959,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         },
       },
     });
-    playSound('alliance');
+    playSound('tech_unlock');
   },
 
   toggleAutoRecruit: () => {

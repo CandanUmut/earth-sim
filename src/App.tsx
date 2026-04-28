@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import WorldMap from './components/WorldMap';
 import CountryInfoPanel from './components/CountryInfoPanel';
 import Header from './components/Header';
@@ -14,6 +14,12 @@ import EndScreen from './components/EndScreen';
 import Tutorial from './components/Tutorial';
 import TechTreePanel from './components/TechTreePanel';
 import { useGameStore } from './store/gameStore';
+import {
+  setMusicMode,
+  playBattleLoop,
+  stopBattleLoop,
+  play as playSound,
+} from './sound/sound';
 
 export default function App() {
   const loadInitialWorld = useGameStore((s) => s.loadInitialWorld);
@@ -22,6 +28,57 @@ export default function App() {
   useEffect(() => {
     loadInitialWorld();
   }, [loadInitialWorld]);
+
+  // Wire ambient music + battle loop + event warning chime to store changes.
+  // The main reason this is in App and not the store is that AudioContext
+  // playback must be triggered after a user gesture; we kick it off after a
+  // first non-empty state change (game started) anyway.
+  const lastWarStateRef = useRef<boolean>(false);
+  const lastBattleCountRef = useRef<number>(0);
+  const lastEventIdRef = useRef<string | null>(null);
+  const lastGameStartedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    const apply = (state: ReturnType<typeof useGameStore.getState>) => {
+      // Music: menu → peace → war crossfades.
+      if (!state.gameStarted) {
+        if (lastGameStartedRef.current) {
+          // Returning to start screen.
+          void setMusicMode('menu');
+        }
+      } else {
+        const player = state.playerCountryId
+          ? state.nations[state.playerCountryId]
+          : null;
+        const atWar = player
+          ? Object.values(player.stance).some((s) => s === 'war')
+          : false;
+        if (atWar !== lastWarStateRef.current || !lastGameStartedRef.current) {
+          void setMusicMode(atWar ? 'war' : 'peace');
+          lastWarStateRef.current = atWar;
+        }
+      }
+      lastGameStartedRef.current = state.gameStarted;
+
+      // Battle loop: only while there's at least one active battle.
+      const battleCount = Object.keys(state.activeBattles).length;
+      if (battleCount > 0 && lastBattleCountRef.current === 0) {
+        void playBattleLoop();
+      } else if (battleCount === 0 && lastBattleCountRef.current > 0) {
+        stopBattleLoop();
+      }
+      lastBattleCountRef.current = battleCount;
+
+      // New world events → warning ping.
+      const newest = state.unreadEvents[state.unreadEvents.length - 1];
+      if (newest && newest.id !== lastEventIdRef.current) {
+        lastEventIdRef.current = newest.id;
+        playSound('event_warning');
+      }
+    };
+    apply(useGameStore.getState());
+    return useGameStore.subscribe(apply);
+  }, []);
 
   return (
     <div className="relative h-full w-full overflow-hidden">

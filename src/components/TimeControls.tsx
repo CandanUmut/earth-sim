@@ -1,8 +1,25 @@
 import { useEffect, useState } from 'react';
-import { Pause, Play, Volume2, VolumeX, GraduationCap } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Pause,
+  Play,
+  Volume2,
+  VolumeX,
+  GraduationCap,
+  Sliders,
+} from 'lucide-react';
 import { useGameStore, type Speed } from '../store/gameStore';
 import { formatDate } from '../game/tick';
-import { isMuted, setMuted } from '../sound/sound';
+import {
+  isMuted,
+  setMuted,
+  getMasterVolume,
+  getSfxVolume,
+  getMusicVolume,
+  setMasterVolume,
+  setSfxVolume,
+  setMusicVolume,
+} from '../sound/sound';
 
 const TUTORIAL_KEY = 'terra-bellum-tutorial-seen-v2';
 
@@ -14,6 +31,12 @@ export default function TimeControls() {
   const togglePaused = useGameStore((s) => s.togglePaused);
   const setSpeed = useGameStore((s) => s.setSpeed);
   const [muted, setMutedLocal] = useState(() => isMuted());
+  const [showVol, setShowVol] = useState(false);
+  const [vols, setVols] = useState(() => ({
+    master: getMasterVolume(),
+    sfx: getSfxVolume(),
+    music: getMusicVolume(),
+  }));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -123,28 +146,134 @@ export default function TimeControls() {
         }}
       />
 
+      <div style={{ position: 'relative' }}>
+        <button
+          type="button"
+          onClick={() => {
+            const next = !muted;
+            setMuted(next);
+            setMutedLocal(next);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setShowVol((v) => !v);
+          }}
+          aria-label={muted ? 'Unmute' : 'Mute'}
+          title={muted ? 'Unmute (right-click for volume)' : 'Mute (right-click for volume)'}
+          style={{
+            width: 32,
+            height: 32,
+            display: 'grid',
+            placeItems: 'center',
+            background: 'transparent',
+            color: 'var(--ink)',
+            border: '1px solid var(--ink)',
+            cursor: 'pointer',
+          }}
+        >
+          {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+        </button>
+      </div>
       <button
         type="button"
-        onClick={() => {
-          const next = !muted;
-          setMuted(next);
-          setMutedLocal(next);
-        }}
-        aria-label={muted ? 'Unmute' : 'Mute'}
-        title={muted ? 'Unmute' : 'Mute'}
+        onClick={() => setShowVol((v) => !v)}
+        aria-label="Sound mixer"
+        title="Sound mixer"
         style={{
           width: 32,
           height: 32,
           display: 'grid',
           placeItems: 'center',
-          background: 'transparent',
-          color: 'var(--ink)',
+          background: showVol ? 'var(--ink)' : 'transparent',
+          color: showVol ? 'var(--paper)' : 'var(--ink)',
           border: '1px solid var(--ink)',
           cursor: 'pointer',
         }}
       >
-        {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+        <Sliders size={14} />
       </button>
+      <AnimatePresence>
+        {showVol && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.18 }}
+            style={{
+              position: 'absolute',
+              bottom: 56,
+              right: 4,
+              background: 'var(--paper)',
+              border: '1px solid var(--ink)',
+              boxShadow: '0 6px 18px rgba(26,24,20,0.18)',
+              padding: '12px 14px',
+              minWidth: 220,
+              zIndex: 35,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: '0.16em',
+                textTransform: 'uppercase',
+                color: 'var(--ink-faded)',
+                marginBottom: 8,
+              }}
+            >
+              Mixer
+            </div>
+            {(
+              [
+                { key: 'master', label: 'Master' },
+                { key: 'sfx', label: 'SFX' },
+                { key: 'music', label: 'Music' },
+              ] as const
+            ).map((row) => (
+              <div key={row.key} style={{ marginBottom: 6 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--ink)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span>{row.label}</span>
+                  <span className="num" style={{ color: 'var(--ink-faded)' }}>
+                    {Math.round(vols[row.key] * 100)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={vols[row.key]}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    setVols((p) => ({ ...p, [row.key]: v }));
+                    if (row.key === 'master') setMasterVolume(v);
+                    else if (row.key === 'sfx') setSfxVolume(v);
+                    else setMusicVolume(v);
+                  }}
+                  style={{ width: '100%' }}
+                />
+              </div>
+            ))}
+            <div
+              style={{
+                fontSize: 10,
+                color: 'var(--ink-faded)',
+                fontStyle: 'italic',
+                marginTop: 4,
+              }}
+            >
+              Drop music files in <span className="num">public/sounds/</span> —
+              see the README there for filenames.
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <button
         type="button"

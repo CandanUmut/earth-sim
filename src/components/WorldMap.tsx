@@ -53,11 +53,22 @@ export default function WorldMap() {
 
   const cameraTarget = useGameStore((s) => s.cameraTarget);
   const cameraVersion = useGameStore((s) => s.cameraVersion);
+  const openDispatch = useGameStore((s) => s.openDispatch);
+  const quickDispatch = useGameStore((s) => s.quickDispatch);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const gRef = useRef<SVGGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+
+  // Right-click-drag attack state.
+  const [attackDrag, setAttackDrag] = useState<{
+    originId: string;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+  } | null>(null);
 
   const { w, h } = useWindowSize();
 
@@ -126,6 +137,54 @@ export default function WorldMap() {
       svgEl.removeEventListener('wheel', onWheel);
     };
   }, [w, h]);
+
+  // Right-click-drag attack: while a drag is in flight, follow the pointer
+  // and on release dispatch to the country under the pointer.
+  useEffect(() => {
+    if (!attackDrag) return;
+    const onMove = (e: MouseEvent) => {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      setAttackDrag((prev) =>
+        prev
+          ? { ...prev, toX: e.clientX - rect.left, toY: e.clientY - rect.top }
+          : prev,
+      );
+    };
+    const onUp = (e: MouseEvent) => {
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      let countryId: string | null = null;
+      if (target instanceof SVGElement) {
+        const dataId = target.getAttribute('data-id');
+        if (dataId) countryId = dataId;
+      }
+      const origin = attackDrag?.originId ?? null;
+      setAttackDrag(null);
+      if (countryId && origin && countryId !== origin) {
+        openDispatch(countryId);
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [attackDrag, openDispatch]);
+
+  // Suppress browser context menu on the SVG so right-click drag works.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    svg.addEventListener('contextmenu', onMenu);
+    return () => {
+      svg.removeEventListener('contextmenu', onMenu);
+    };
+  }, []);
 
   // External camera target (driven by tutorial / future smart-zoom). Smoothly
   // pan + scale to a country, or reset to identity.
@@ -333,8 +392,45 @@ export default function WorldMap() {
                   setHovered(null);
                   if (tooltipRef.current) tooltipRef.current.style.opacity = '0';
                 }}
+                onMouseDown={(e) => {
+                  // Right-button drag: start an attack-drag from this owned tile.
+                  if (e.button !== 2) return;
+                  if (!playerId) return;
+                  const owner = ownership[id] ?? id;
+                  if (owner !== playerId) return;
+                  const svg = svgRef.current;
+                  if (!svg) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const rect = svg.getBoundingClientRect();
+                  // Origin = projected centroid (in screen space, after transform).
+                  const country = countries[id];
+                  if (!country) return;
+                  const projected = pathD.projection(country.centroid);
+                  if (!projected) return;
+                  // Apply the current zoom transform so the arrow tail
+                  // anchors to the on-screen position of the country.
+                  const t = d3.zoomTransform(svg);
+                  const fromX = projected[0] * t.k + t.x;
+                  const fromY = projected[1] * t.k + t.y;
+                  setAttackDrag({
+                    originId: id,
+                    fromX,
+                    fromY,
+                    toX: e.clientX - rect.left,
+                    toY: e.clientY - rect.top,
+                  });
+                }}
                 onClick={(e) => {
                   e.stopPropagation();
+                  // Shift-click on a non-owned tile = instant quick-dispatch.
+                  if (e.shiftKey && playerId) {
+                    const owner = ownership[id] ?? id;
+                    if (owner !== playerId) {
+                      quickDispatch(id);
+                      return;
+                    }
+                  }
                   setSelected(id);
                 }}
               />
@@ -376,6 +472,41 @@ export default function WorldMap() {
           fill="url(#vignette)"
           pointerEvents="none"
         />
+        {attackDrag && (
+          <g pointerEvents="none">
+            <defs>
+              <marker
+                id="drag-arrow-head"
+                markerWidth={10}
+                markerHeight={10}
+                refX={6}
+                refY={5}
+                orient="auto-start-reverse"
+              >
+                <path d="M0,0 L8,5 L0,10 z" fill="var(--accent-gold)" />
+              </marker>
+            </defs>
+            <line
+              x1={attackDrag.fromX}
+              y1={attackDrag.fromY}
+              x2={attackDrag.toX}
+              y2={attackDrag.toY}
+              stroke="var(--accent-gold)"
+              strokeWidth={3}
+              strokeDasharray="6 4"
+              opacity={0.9}
+              markerEnd="url(#drag-arrow-head)"
+            />
+            <circle
+              cx={attackDrag.fromX}
+              cy={attackDrag.fromY}
+              r={5}
+              fill="var(--accent-gold)"
+              stroke="var(--ink)"
+              strokeWidth={1}
+            />
+          </g>
+        )}
       </svg>
       <div
         ref={tooltipRef}

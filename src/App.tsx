@@ -8,6 +8,7 @@ import PlayerHUD from './components/PlayerHUD';
 import SendTroopsModal from './components/SendTroopsModal';
 import BattleHub from './components/BattleHub';
 import BattleLog from './components/BattleLog';
+import WarRoom from './components/WarRoom';
 import EndScreen from './components/EndScreen';
 import Tutorial from './components/Tutorial';
 import TechTreePanel from './components/TechTreePanel';
@@ -29,6 +30,7 @@ export default function App() {
       <CountryInfoPanel />
       <TimeControls />
       <BattleLog />
+      <WarRoom />
       <SendTroopsModal />
       <BattleHub />
       <TechTreePanel />

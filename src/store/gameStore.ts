@@ -148,6 +148,9 @@ export type GameState = {
   openBattleHub: (locationId: string) => void;
   closeBattleHub: () => void;
   retreatFromBattle: (locationId: string) => void;
+  /** Auto-dispatch a balanced force from the closest owned territory (50% of
+   *  available, minus garrison). Used by shift-click and War Room. */
+  quickDispatch: (toId: string) => void;
 };
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -770,6 +773,27 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   closeBattleHub: () => {
     set({ focusedBattleLocationId: null });
+  },
+
+  quickDispatch: (toId) => {
+    const { playerCountryId, nations, dispatchTroops } = get();
+    if (!playerCountryId) return;
+    const player = nations[playerCountryId];
+    if (!player) return;
+    // Send 50 % of each pool (the modal logic still respects garrison).
+    const half = (n: number) => Math.floor(n * 0.5);
+    const composition = {
+      infantry: half(player.infantry),
+      cavalry: half(player.cavalry),
+      artillery: half(player.artillery),
+    };
+    if (
+      composition.infantry + composition.cavalry + composition.artillery <=
+      0
+    ) {
+      return;
+    }
+    dispatchTroops(toId, composition);
   },
 
   retreatFromBattle: (locationId) => {

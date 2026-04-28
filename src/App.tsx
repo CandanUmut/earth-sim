@@ -9,6 +9,7 @@ import SendTroopsModal from './components/SendTroopsModal';
 import BattleHub from './components/BattleHub';
 import BattleLog from './components/BattleLog';
 import WarRoom from './components/WarRoom';
+import EventToast from './components/EventToast';
 import EndScreen from './components/EndScreen';
 import Tutorial from './components/Tutorial';
 import TechTreePanel from './components/TechTreePanel';
@@ -31,6 +32,7 @@ export default function App() {
       <TimeControls />
       <BattleLog />
       <WarRoom />
+      <EventToast />
       <SendTroopsModal />
       <BattleHub />
       <TechTreePanel />

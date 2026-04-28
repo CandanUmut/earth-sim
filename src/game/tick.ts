@@ -43,6 +43,11 @@ import {
   BALANCE_POLITICS,
 } from './balance';
 import {
+  rollWorldEvent,
+  BALANCE_EVENTS,
+  type GameEvent,
+} from './events';
+import {
   autoRecruitUnlocked,
   autoRecruitInterval,
   autoRecruitThreshold,
@@ -135,7 +140,14 @@ export type TickOutput = {
   activeBattles: Record<string, ActiveBattle>;
   newBattles: BattleLogEntry[];
   newArrivals: ArrivalEvent[];
+  newEvents: GameEvent[];
   victory: VictoryState;
+};
+
+export type RebellionEvent = {
+  countryId: string;
+  formerOwner: string;
+  tick: number;
 };
 
 let battleCounter = 0;
@@ -1269,7 +1281,7 @@ export function runTick(input: TickInput): TickOutput {
   const date = advanceDate(input.date);
   const now = performance.now();
 
-  const populations = growPopulations(input.populations);
+  let populations = growPopulations(input.populations);
 
   let nations = applyEconomy(input.countries, input.ownership, input.nations);
 
@@ -1404,6 +1416,104 @@ export function runTick(input: TickInput): TickOutput {
     }
   }
 
+  // Rebellion check: each tick, a small chance per conquered tile of an
+  // anti-occupier uprising. Probability scales with how many tiles the
+  // owner has conquered (fragility from over-extension).
+  {
+    const ownedCounts: Record<string, number> = {};
+    for (const owner of Object.values(ownership)) {
+      ownedCounts[owner] = (ownedCounts[owner] ?? 0) + 1;
+    }
+    for (const id of Object.keys(ownership)) {
+      const owner = ownership[id];
+      if (!owner || owner === id) continue;
+      const empireSize = ownedCounts[owner] ?? 1;
+      // Below 4 tiles the empire is solid. Above that, ~0.4 % * (size−3) per tile.
+      const prob = Math.min(0.04, Math.max(0, (empireSize - 3) * 0.004));
+      if (input.rng() < prob) {
+        ownership = { ...ownership, [id]: id };
+        control = { ...control, [id]: BALANCE_CONTROL.fullControl };
+        const cleared = { ...contestedBy };
+        delete cleared[id];
+        contestedBy = cleared;
+      }
+    }
+  }
+
+  // World event roll, every BALANCE_EVENTS.rollInterval ticks.
+  const newEvents: GameEvent[] = [];
+  if (input.tickCount > 0 && input.tickCount % BALANCE_EVENTS.rollInterval === 0) {
+    const result = rollWorldEvent({
+      tickCount: input.tickCount,
+      countryOrder: Object.keys(input.countries),
+      ownership,
+      populations,
+      nations,
+      playerCountryId: input.playerCountryId,
+      rng: input.rng,
+    });
+    if (result) {
+      newEvents.push(result.event);
+      // Apply population delta.
+      for (const [id, delta] of Object.entries(result.populationDelta)) {
+        const cur = populations[id] ?? 0;
+        populations = { ...populations, [id]: Math.max(0, cur + delta) };
+      }
+      // Apply gold delta.
+      for (const [id, delta] of Object.entries(result.goldDelta)) {
+        const n = nations[id];
+        if (!n) continue;
+        nations = {
+          ...nations,
+          [id]: { ...n, gold: Math.max(0, n.gold + delta) },
+        };
+      }
+      // Apply troop delta uniformly across composition.
+      for (const [id, delta] of Object.entries(result.troopDelta)) {
+        const n = nations[id];
+        if (!n) continue;
+        const tot = n.infantry + n.cavalry + n.artillery;
+        if (tot <= 0) continue;
+        const r = -delta / tot; // delta is negative for losses
+        const lossInf = Math.round(n.infantry * r);
+        const lossCav = Math.round(n.cavalry * r);
+        const lossArt = Math.round(n.artillery * r);
+        nations = {
+          ...nations,
+          [id]: {
+            ...n,
+            infantry: Math.max(0, n.infantry - lossInf),
+            cavalry: Math.max(0, n.cavalry - lossCav),
+            artillery: Math.max(0, n.artillery - lossArt),
+          },
+        };
+      }
+      // Tech breakthrough — bump tech.
+      if (result.event.kind === 'tech_breakthrough') {
+        const owner = ownership[result.event.targetId];
+        const n = nations[owner];
+        if (n) {
+          nations = {
+            ...nations,
+            [owner]: { ...n, tech: n.tech + 0.15 },
+          };
+        }
+      }
+      // Ownership change (peasant revolt).
+      if (result.ownershipChange) {
+        const { countryId, newOwner } = result.ownershipChange;
+        ownership = { ...ownership, [countryId]: newOwner };
+        control = {
+          ...control,
+          [countryId]: BALANCE_CONTROL.fullControl,
+        };
+        const cleared = { ...contestedBy };
+        delete cleared[countryId];
+        contestedBy = cleared;
+      }
+    }
+  }
+
   let victory: VictoryState = { kind: 'ongoing' };
   if (input.playerCountryId && input.homeCountryId) {
     victory = evaluateVictory({
@@ -1428,6 +1538,7 @@ export function runTick(input: TickInput): TickOutput {
     activeBattles,
     newBattles: allBattleEntries,
     newArrivals: moveStep.arrivals,
+    newEvents,
     victory,
   };
 }

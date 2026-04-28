@@ -24,6 +24,8 @@ export default function StartScreen() {
   const savedSummary = useGameStore((s) => s.savedSummary);
   const resumeCampaign = useGameStore((s) => s.resumeCampaign);
   const countries = useGameStore((s) => s.countries);
+  const difficulty = useGameStore((s) => s.difficulty);
+  const setDifficulty = useGameStore((s) => s.setDifficulty);
 
   const show = loaded && !gameStarted;
   const savedCountry = savedSummary?.playerCountryId
@@ -144,6 +146,47 @@ export default function StartScreen() {
               )}
             </div>
 
+            <div
+              style={{
+                display: 'flex',
+                gap: 6,
+                justifyContent: 'center',
+                marginBottom: 14,
+              }}
+            >
+              {(['easy', 'normal', 'hard'] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDifficulty(d)}
+                  style={{
+                    background:
+                      difficulty === d ? 'var(--ink)' : 'transparent',
+                    color: difficulty === d ? 'var(--paper)' : 'var(--ink)',
+                    border: '1px solid var(--ink)',
+                    padding: '6px 16px',
+                    fontFamily: '"Crimson Pro", serif',
+                    fontSize: 13,
+                    letterSpacing: '0.04em',
+                    cursor: 'pointer',
+                    textTransform: 'capitalize',
+                  }}
+                  title={
+                    d === 'easy'
+                      ? '1.5× starting bonus, gentler events'
+                      : d === 'hard'
+                        ? '0.7× gold / 0.8× troops, hostile world'
+                        : 'Standard balance'
+                  }
+                >
+                  {d === 'easy'
+                    ? 'Cartographer'
+                    : d === 'hard'
+                      ? 'Conqueror'
+                      : 'Strategist'}
+                </button>
+              ))}
+            </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
               <button
                 type="button"

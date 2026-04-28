@@ -43,6 +43,8 @@ import {
   type TroopMovement,
 } from '../game/movement';
 import type { ActiveBattle } from '../game/activeBattle';
+import type { GameEvent } from '../game/events';
+import { BALANCE_EVENTS } from '../game/events';
 import { type VictoryState } from '../game/victory';
 import {
   BALANCE,
@@ -60,6 +62,7 @@ import {
 import { play as playSound } from '../sound/sound';
 
 export type Speed = 1 | 2 | 3;
+export type Difficulty = 'easy' | 'normal' | 'hard';
 
 export type CameraTarget =
   | { kind: 'country'; countryId: string; scale: number }
@@ -98,6 +101,10 @@ export type GameState = {
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   activeBattles: Record<string, ActiveBattle>;
+  eventLog: GameEvent[];
+  /** Newest events queued for toast UI, then drained. */
+  unreadEvents: GameEvent[];
+  difficulty: Difficulty;
   battleLog: BattleLogEntry[];
   battleAnimations: BattleAnimation[];
   arrivalTrails: ArrivalEvent[];
@@ -129,6 +136,8 @@ export type GameState = {
   setSelected: (id: string | null) => void;
   setHovered: (id: string | null) => void;
   startCampaign: (playerId: string) => void;
+  setDifficulty: (d: Difficulty) => void;
+  acknowledgeEvent: (id: string) => void;
   setPaused: (paused: boolean) => void;
   togglePaused: () => void;
   setSpeed: (speed: Speed) => void;
@@ -211,6 +220,9 @@ const initialState = {
   lastBattleTick: {} as Record<string, number>,
   movements: [] as TroopMovement[],
   activeBattles: {} as Record<string, ActiveBattle>,
+  eventLog: [] as GameEvent[],
+  unreadEvents: [] as GameEvent[],
+  difficulty: 'normal' as Difficulty,
   battleLog: [] as BattleLogEntry[],
   battleAnimations: [] as BattleAnimation[],
   arrivalTrails: [] as ArrivalEvent[],
@@ -286,18 +298,30 @@ export const useGameStore = create<GameState>((set, get) => ({
   setHovered: (id) => set({ hoveredCountryId: id }),
 
   startCampaign: (playerId) => {
-    const { nations, countries } = get();
+    const { nations, countries, difficulty } = get();
     const baseline = nations[playerId];
     const country = countries[playerId];
     if (!baseline || !country) return;
     const cap = maxTroops(country);
     const totalNow = totalTroops(baseline);
-    const buffMul = BALANCE.playerTroopMultiplier;
-    const buffedTotal = Math.min(cap, Math.round(totalNow * buffMul));
+    // Difficulty modifies the player's starting buff.
+    const goldMul =
+      difficulty === 'easy'
+        ? BALANCE.playerGoldMultiplier * 1.5
+        : difficulty === 'hard'
+          ? BALANCE.playerGoldMultiplier * 0.7
+          : BALANCE.playerGoldMultiplier;
+    const troopMul =
+      difficulty === 'easy'
+        ? BALANCE.playerTroopMultiplier * 1.4
+        : difficulty === 'hard'
+          ? BALANCE.playerTroopMultiplier * 0.8
+          : BALANCE.playerTroopMultiplier;
+    const buffedTotal = Math.min(cap, Math.round(totalNow * troopMul));
     const factor = totalNow > 0 ? buffedTotal / totalNow : 1;
     const buffed: Nation = {
       ...baseline,
-      gold: baseline.gold * BALANCE.playerGoldMultiplier,
+      gold: baseline.gold * goldMul,
       infantry: Math.round(baseline.infantry * factor),
       cavalry: Math.round(baseline.cavalry * factor),
       artillery: Math.round(baseline.artillery * factor),
@@ -445,6 +469,12 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const battleLog = [...result.newBattles, ...s.battleLog].slice(0, 30);
 
+    const eventLog = [...result.newEvents, ...s.eventLog].slice(
+      0,
+      BALANCE_EVENTS.logSize,
+    );
+    const unreadEvents = [...s.unreadEvents, ...result.newEvents].slice(-5);
+
     set({
       date: result.date,
       tickCount: s.tickCount + 1,
@@ -457,6 +487,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastBattleTick: result.lastBattleTick,
       movements: result.movements,
       activeBattles: result.activeBattles,
+      eventLog,
+      unreadEvents,
       battleLog,
       battleAnimations,
       arrivalTrails: trails,
@@ -982,6 +1014,16 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   setCameraTarget: (target) => {
     set({ cameraTarget: target, cameraVersion: get().cameraVersion + 1 });
+  },
+
+  setDifficulty: (d) => {
+    set({ difficulty: d });
+  },
+
+  acknowledgeEvent: (id) => {
+    set({
+      unreadEvents: get().unreadEvents.filter((e) => e.id !== id),
+    });
   },
 
   openBattleHub: (locationId) => {

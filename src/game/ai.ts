@@ -1,7 +1,7 @@
 import type { Country } from './world';
 import { totalTroops, type Nation, type TroopType } from './economy';
 import { findPath } from './movement';
-import { BALANCE_AI, BALANCE_MOVEMENT } from './balance';
+import { BALANCE_AI, BALANCE_MOVEMENT, BALANCE_POLITICS } from './balance';
 
 export type Personality =
   | 'aggressive'
@@ -276,5 +276,123 @@ export function evaluatePeaceProposal(args: {
       return true;
     case 'merchant':
       return true;
+  }
+}
+
+/** Trade is widely accepted unless reputation is very low or already at war. */
+export function evaluateTradeProposal(args: {
+  proposerId: string;
+  targetId: string;
+  nations: Record<string, Nation>;
+  brain: AIBrain;
+}): boolean {
+  const { proposerId, targetId, nations, brain } = args;
+  const target = nations[targetId];
+  const proposer = nations[proposerId];
+  if (!target || !proposer) return false;
+  if (target.stance[proposerId] === 'war') return false;
+  if (target.tradePartners.includes(proposerId)) return false;
+  // Cap on partners.
+  if (
+    target.tradePartners.length >= BALANCE_POLITICS.maxTradePartners &&
+    brain.personality !== 'merchant'
+  ) {
+    return false;
+  }
+  // Reputation check: very low reputation = refusal.
+  if (proposer.reputation < 25 && brain.personality !== 'opportunist') {
+    return false;
+  }
+  switch (brain.personality) {
+    case 'aggressive':
+      return Math.random() < 0.35;
+    case 'defensive':
+      return Math.random() < 0.55;
+    case 'opportunist':
+      return Math.random() < 0.7;
+    case 'isolationist':
+      return Math.random() < 0.25;
+    case 'merchant':
+      return Math.random() < 0.92;
+  }
+}
+
+/** Tribute demand: target accepts if much weaker than demander; refuses otherwise. */
+export function evaluateTributeDemand(args: {
+  proposerId: string;
+  targetId: string;
+  nations: Record<string, Nation>;
+  brain: AIBrain;
+  targetCountry: Country;
+}): { outcome: 'accept' | 'refuse'; amount: number } {
+  const { proposerId, targetId, nations, brain, targetCountry } = args;
+  const target = nations[targetId];
+  const proposer = nations[proposerId];
+  if (!target || !proposer) return { outcome: 'refuse', amount: 0 };
+  // Already paying us — treat as no-op refuse.
+  if (target.tributePaid[proposerId]) {
+    return { outcome: 'refuse', amount: 0 };
+  }
+  const proposerStr = totalTroops(proposer) * proposer.tech;
+  const targetStr = totalTroops(target) * target.tech;
+  const ratio = proposerStr / Math.max(1, targetStr);
+  // Tribute amount scales with target's gold income (we use baseEconomy as a proxy).
+  const amount = Math.max(
+    1,
+    Math.round(targetCountry.baseEconomy * BALANCE_POLITICS.tributeFraction),
+  );
+  // Acceptance threshold by personality.
+  let threshold: number;
+  switch (brain.personality) {
+    case 'aggressive':
+      threshold = 3.5;
+      break;
+    case 'defensive':
+      threshold = 1.7;
+      break;
+    case 'opportunist':
+      threshold = 2.2;
+      break;
+    case 'isolationist':
+      threshold = 2.0;
+      break;
+    case 'merchant':
+      threshold = 1.5;
+      break;
+  }
+  return ratio >= threshold
+    ? { outcome: 'accept', amount }
+    : { outcome: 'refuse', amount };
+}
+
+/** Vassalization: target accepts if heavily defeated (low control) and proposer
+ *  is much stronger. Otherwise the offer falls flat. */
+export function evaluateVassalizationOffer(args: {
+  proposerId: string;
+  targetId: string;
+  nations: Record<string, Nation>;
+  brain: AIBrain;
+  currentControl: number;
+}): boolean {
+  const { proposerId, targetId, nations, brain, currentControl } = args;
+  const target = nations[targetId];
+  const proposer = nations[proposerId];
+  if (!target || !proposer) return false;
+  if (target.vassalOf) return false;
+  if (currentControl > BALANCE_POLITICS.vassalizeMaxControl) return false;
+  const proposerStr = totalTroops(proposer) * proposer.tech;
+  const targetStr = totalTroops(target) * target.tech;
+  const ratio = proposerStr / Math.max(1, targetStr);
+  switch (brain.personality) {
+    case 'aggressive':
+      return ratio >= 4 && Math.random() < 0.5;
+    case 'defensive':
+      return ratio >= 2 && Math.random() < 0.85;
+    case 'opportunist':
+      return ratio >= 2.5 && Math.random() < 0.7;
+    case 'isolationist':
+      return ratio >= 3 && Math.random() < 0.6;
+    case 'merchant':
+      return ratio >= 1.8 && Math.random() < 0.9;
   }
 }

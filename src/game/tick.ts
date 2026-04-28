@@ -40,6 +40,7 @@ import {
   BALANCE,
   BALANCE_MOVEMENT,
   BALANCE_CONTROL,
+  BALANCE_POLITICS,
 } from './balance';
 import {
   autoRecruitUnlocked,
@@ -152,6 +153,25 @@ function applyEconomy(
   for (const ownerId of Object.values(ownership)) {
     ownedCount[ownerId] = (ownedCount[ownerId] ?? 0) + 1;
   }
+  // Phase 1: compute base income for each nation (including trade bonus).
+  const baseIncome: Record<string, number> = {};
+  for (const [id, nation] of Object.entries(nations)) {
+    const country = countries[id];
+    if (!country) continue;
+    const owned = ownedCount[id] ?? 0;
+    let income = goldPerTick(country, nation, owned);
+    const tradeCount = Math.min(
+      nation.tradePartners.length,
+      BALANCE_POLITICS.maxTradePartners,
+    );
+    if (tradeCount > 0) {
+      income *= Math.pow(BALANCE_POLITICS.tradePartnerGoldMul, tradeCount);
+    }
+    baseIncome[id] = income;
+  }
+  // Phase 2: tributes — pay overlords first, then collect from tributaries.
+  // Each demand pays a fixed gold/tick (tributePaid map). If the payer can't
+  // cover it, they pay what they can; the agreement persists until renegotiated.
   const updated: Record<string, Nation> = {};
   for (const [id, nation] of Object.entries(nations)) {
     const country = countries[id];
@@ -159,10 +179,48 @@ function applyEconomy(
       updated[id] = nation;
       continue;
     }
-    const owned = ownedCount[id] ?? 0;
-    const income = goldPerTick(country, nation, owned);
+    const income = baseIncome[id] ?? 0;
     const upkeep = troopUpkeepPerTick(nation);
     let gold = nation.gold + income - upkeep;
+    // Pay tributes (tributePaid map: overlord → gold/tick).
+    let totalTributePaid = 0;
+    for (const [overlordId, amount] of Object.entries(nation.tributePaid)) {
+      const pay = Math.max(0, Math.min(amount, gold));
+      gold -= pay;
+      totalTributePaid += pay;
+      void overlordId;
+    }
+    // Vassal kicks back fraction of base income to overlord (in addition to
+    // explicit tribute, but only if treasury can sustain).
+    if (nation.vassalOf && nations[nation.vassalOf]) {
+      const kickback = Math.min(
+        gold,
+        income * BALANCE_POLITICS.vassalTributeFraction,
+      );
+      gold -= kickback;
+      totalTributePaid += kickback;
+    }
+    // Receive tributes (tributeReceived map: tributary → gold/tick promised).
+    let totalTributeReceived = 0;
+    for (const [tributaryId, amount] of Object.entries(
+      nation.tributeReceived,
+    )) {
+      const tributary = nations[tributaryId];
+      if (!tributary) continue;
+      // The actual payable from tributary's side will be capped by their
+      // current gold; we just credit at face value. Their applyEconomy step
+      // limits what they actually pay. Here we credit nominal so the
+      // overlord doesn't starve.
+      totalTributeReceived += amount;
+    }
+    gold += totalTributeReceived;
+    // Vassal kickback in (mirrors the deduction on the vassal side).
+    for (const vassalId of nation.vassals) {
+      const vass = nations[vassalId];
+      if (!vass) continue;
+      const vassIncome = baseIncome[vassalId] ?? 0;
+      gold += vassIncome * BALANCE_POLITICS.vassalTributeFraction;
+    }
     let infantry = nation.infantry;
     let cavalry = nation.cavalry;
     let artillery = nation.artillery;
@@ -178,6 +236,7 @@ function applyEconomy(
       gold = 0;
     }
     updated[id] = { ...nation, gold, infantry, cavalry, artillery };
+    void totalTributePaid;
   }
   return updated;
 }
@@ -254,6 +313,22 @@ function growPopulations(
     next[id] = Math.round(pop * (1 + BALANCE.populationGrowthPerTick));
   }
   return next;
+}
+
+function computePopulationShare(
+  ownerId: string,
+  ownership: Record<string, string>,
+  populations: Record<string, number>,
+): number {
+  let total = 0;
+  let owned = 0;
+  for (const [id, owner] of Object.entries(ownership)) {
+    const pop = populations[id] ?? 0;
+    total += pop;
+    if (owner === ownerId) owned += pop;
+  }
+  if (total <= 0) return 0;
+  return owned / total;
 }
 
 /** Simple deterministic hash for spreading auto-recruit cadence per nation. */
@@ -1291,6 +1366,42 @@ export function runTick(input: TickInput): TickOutput {
     nations = applied.nations;
     movements = applied.movements;
     brains[id] = { ...advancedBrain, ticksSinceThink: 0 };
+  }
+
+  // Coalition trigger: once the player crosses the population-share threshold,
+  // every neutral, non-vassal AI nation flips to war with them and allied with
+  // each other. Fires once per game (we just declare war on contact, not a
+  // sticky flag — but stance becomes 'war', which is sticky already).
+  if (input.playerCountryId && input.homeCountryId) {
+    const playerShare = computePopulationShare(
+      input.playerCountryId,
+      ownership,
+      populations,
+    );
+    if (playerShare >= BALANCE_POLITICS.coalitionThreshold) {
+      const playerId = input.playerCountryId;
+      for (const id of Object.keys(nations)) {
+        if (id === playerId) continue;
+        const n = nations[id];
+        if (!n) continue;
+        if (n.vassalOf === playerId) continue;
+        const stanceToPlayer = n.stance[playerId] ?? 'neutral';
+        if (stanceToPlayer === 'allied' || stanceToPlayer === 'war') continue;
+        nations = setMutualStance(nations, id, playerId, 'war');
+        // Reduce reputation of player slightly each new declaration as the
+        // coalition spreads its propaganda.
+        const player = nations[playerId];
+        if (player) {
+          nations = {
+            ...nations,
+            [playerId]: {
+              ...player,
+              reputation: Math.max(0, player.reputation - 1),
+            },
+          };
+        }
+      }
+    }
   }
 
   let victory: VictoryState = { kind: 'ongoing' };

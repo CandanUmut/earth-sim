@@ -26,6 +26,19 @@ export type Nation = {
   autoRecruit: boolean;
   /** Barracks level 1–5; raises bulk-recruit cap and shaves recruit cost. */
   barracksLevel: number;
+  /** Reputation 0–100. High = trustworthy; AI accepts more deals. Low =
+   *  suspicious; AI refuses, joins coalitions, breaks alliances. */
+  reputation: number;
+  /** Other nation ids this one currently trades with. Mutually maintained. */
+  tradePartners: string[];
+  /** Gold/tick this nation pays as tribute, keyed by the overlord they pay. */
+  tributePaid: Record<string, number>;
+  /** Gold/tick this nation receives in tribute, keyed by the tributary. */
+  tributeReceived: Record<string, number>;
+  /** If non-null, this nation is a vassal of `vassalOf`. */
+  vassalOf: string | null;
+  /** Nations who are vassals of this one. Mirror of vassalOf. */
+  vassals: string[];
 };
 
 export const TROOP_LABELS: Record<TroopType, string> = {
@@ -69,6 +82,12 @@ export function makeStartingNation(country: Country): Nation {
     unlockedTech: [],
     autoRecruit: false,
     barracksLevel: 1,
+    reputation: 50,
+    tradePartners: [],
+    tributePaid: {},
+    tributeReceived: {},
+    vassalOf: null,
+    vassals: [],
   };
 }
 

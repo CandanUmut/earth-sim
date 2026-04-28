@@ -1,9 +1,21 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Swords, Handshake, ScrollText, Coins, Send } from 'lucide-react';
+import {
+  X,
+  Swords,
+  Handshake,
+  ScrollText,
+  Coins,
+  Send,
+  Briefcase,
+  Coins as CoinsAlt,
+  Crown,
+  Unlock,
+} from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
 import type { Country, Terrain } from '../game/world';
 import { SPEC_LABELS, SPEC_DESCRIPTIONS } from '../game/world';
 import { totalTroops, type Nation, type Stance } from '../game/economy';
+import { BALANCE_POLITICS } from '../game/balance';
 
 const terrainLabels: Record<Terrain, string> = {
   plains: 'Plains',
@@ -75,6 +87,12 @@ export default function CountryInfoPanel() {
   const proposeAlliance = useGameStore((s) => s.proposeAlliance);
   const sendGift = useGameStore((s) => s.sendGift);
   const openDispatch = useGameStore((s) => s.openDispatch);
+  const proposeTradeAgreement = useGameStore((s) => s.proposeTradeAgreement);
+  const cancelTradeAgreement = useGameStore((s) => s.cancelTradeAgreement);
+  const demandTribute = useGameStore((s) => s.demandTribute);
+  const cancelTribute = useGameStore((s) => s.cancelTribute);
+  const vassalize = useGameStore((s) => s.vassalize);
+  const releaseVassal = useGameStore((s) => s.releaseVassal);
 
   const isPlayer = selectedId !== null && selectedId === playerId;
 
@@ -277,12 +295,20 @@ export default function CountryInfoPanel() {
               targetId={selectedId}
               ownerId={ownerId}
               playerNation={playerNation}
+              targetNation={ownerNation}
               targetCountry={country}
+              targetControl={control}
               onWar={() => declareWar(ownerId)}
               onPeace={() => proposePeace(ownerId)}
               onAlliance={() => proposeAlliance(ownerId)}
               onGift={() => sendGift(ownerId, GIFT_AMOUNT)}
               onDispatch={() => openDispatch(selectedId)}
+              onTrade={() => proposeTradeAgreement(ownerId)}
+              onCancelTrade={() => cancelTradeAgreement(ownerId)}
+              onTribute={() => demandTribute(ownerId)}
+              onCancelTribute={() => cancelTribute(ownerId)}
+              onVassalize={() => vassalize(ownerId)}
+              onReleaseVassal={() => releaseVassal(ownerId)}
             />
           )}
         </motion.aside>
@@ -293,25 +319,53 @@ export default function CountryInfoPanel() {
 
 function DiplomacySection({
   stance,
+  ownerId,
   playerNation,
+  targetNation,
+  targetControl,
   onWar,
   onPeace,
   onAlliance,
   onGift,
   onDispatch,
+  onTrade,
+  onCancelTrade,
+  onTribute,
+  onCancelTribute,
+  onVassalize,
+  onReleaseVassal,
 }: {
   stance: Stance;
   targetId: string;
   ownerId: string;
   playerNation: Nation | null;
+  targetNation: Nation | null;
   targetCountry: Country;
+  targetControl: number;
   onWar: () => void;
   onPeace: () => void;
   onAlliance: () => void;
   onGift: () => void;
   onDispatch: () => void;
+  onTrade: () => void;
+  onCancelTrade: () => void;
+  onTribute: () => void;
+  onCancelTribute: () => void;
+  onVassalize: () => void;
+  onReleaseVassal: () => void;
 }) {
   const canGift = playerNation ? playerNation.gold >= GIFT_AMOUNT : false;
+  const isTrading = playerNation
+    ? playerNation.tradePartners.includes(ownerId)
+    : false;
+  const isPaying = !!playerNation?.tributePaid?.[ownerId];
+  const isReceiving = !!playerNation?.tributeReceived?.[ownerId];
+  const isVassal = targetNation?.vassalOf === playerNation
+    ? false
+    : !!playerNation?.vassals?.includes(ownerId);
+  const targetIsVassal = !!targetNation?.vassalOf;
+  const eligibleForVassalize =
+    targetControl <= BALANCE_POLITICS.vassalizeMaxControl && !targetIsVassal;
   return (
     <div
       style={{
@@ -331,6 +385,23 @@ function DiplomacySection({
       >
         Statecraft
       </div>
+      {targetNation && (
+        <div
+          style={{
+            fontSize: 10,
+            color: 'var(--ink-faded)',
+            marginBottom: 8,
+            fontStyle: 'italic',
+          }}
+        >
+          Reputation {Math.round(targetNation.reputation)}/100
+          {isTrading && ' · trading'}
+          {isPaying && ' · you tribute them'}
+          {isReceiving && ' · they tribute you'}
+          {isVassal && ' · your vassal'}
+          {targetIsVassal && targetNation.vassalOf && ' · is a vassal'}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <DiploButton
           icon={<Send size={12} />}
@@ -366,6 +437,27 @@ function DiplomacySection({
           onClick={onGift}
           enabled={canGift}
           accent="var(--ink-faded)"
+        />
+        <DiploButton
+          icon={<Briefcase size={12} />}
+          label={isTrading ? 'Cancel Trade' : 'Propose Trade'}
+          onClick={isTrading ? onCancelTrade : onTrade}
+          enabled={stance !== 'war'}
+          accent="var(--accent-sage)"
+        />
+        <DiploButton
+          icon={<CoinsAlt size={12} />}
+          label={isReceiving ? 'Release Tribute' : 'Demand Tribute'}
+          onClick={isReceiving ? onCancelTribute : onTribute}
+          enabled={!isPaying}
+          accent="var(--accent-gold)"
+        />
+        <DiploButton
+          icon={isVassal ? <Unlock size={12} /> : <Crown size={12} />}
+          label={isVassal ? 'Release Vassal' : 'Vassalize'}
+          onClick={isVassal ? onReleaseVassal : onVassalize}
+          enabled={isVassal || eligibleForVassalize}
+          accent="var(--accent-gold)"
         />
       </div>
     </div>

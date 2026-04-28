@@ -25,6 +25,9 @@ import {
   newBrain,
   evaluateAllianceProposal,
   evaluatePeaceProposal,
+  evaluateTradeProposal,
+  evaluateTributeDemand,
+  evaluateVassalizationOffer,
   type AIBrain,
 } from '../game/ai';
 import {
@@ -41,7 +44,12 @@ import {
 } from '../game/movement';
 import type { ActiveBattle } from '../game/activeBattle';
 import { type VictoryState } from '../game/victory';
-import { BALANCE, BALANCE_MOVEMENT, BALANCE_CONTROL } from '../game/balance';
+import {
+  BALANCE,
+  BALANCE_MOVEMENT,
+  BALANCE_CONTROL,
+  BALANCE_POLITICS,
+} from '../game/balance';
 import {
   writeSave,
   readSave,
@@ -135,6 +143,12 @@ export type GameState = {
   proposePeace: (targetId: string) => void;
   proposeAlliance: (targetId: string) => void;
   sendGift: (targetId: string, gold: number) => void;
+  proposeTradeAgreement: (targetId: string) => void;
+  cancelTradeAgreement: (targetId: string) => void;
+  demandTribute: (targetId: string) => void;
+  cancelTribute: (targetId: string) => void;
+  vassalize: (targetId: string) => void;
+  releaseVassal: (vassalId: string) => void;
   toggleBattleLog: () => void;
   dismissEndScreen: () => void;
   newCampaign: () => void;
@@ -639,11 +653,213 @@ export const useGameStore = create<GameState>((set, get) => ({
     const target = nations[targetId];
     if (!player || !target) return;
     if (player.gold < gold) return;
+    // Gifts boost both reputations slightly.
+    const repGain = Math.min(2, gold / 20);
     set({
       nations: {
         ...nations,
-        [playerCountryId]: { ...player, gold: player.gold - gold },
+        [playerCountryId]: {
+          ...player,
+          gold: player.gold - gold,
+          reputation: Math.min(100, player.reputation + repGain),
+        },
         [targetId]: { ...target, gold: target.gold + gold },
+      },
+    });
+  },
+
+  proposeTradeAgreement: (targetId) => {
+    const { playerCountryId, nations, brains } = get();
+    if (!playerCountryId || playerCountryId === targetId) return;
+    const player = nations[playerCountryId];
+    const target = nations[targetId];
+    if (!player || !target) return;
+    if (player.tradePartners.includes(targetId)) return;
+    // Trade requires non-war stance.
+    if ((player.stance[targetId] ?? 'neutral') === 'war') return;
+    const targetBrain = brains[targetId];
+    if (!targetBrain) return;
+    const accepted = evaluateTradeProposal({
+      proposerId: playerCountryId,
+      targetId,
+      nations,
+      brain: targetBrain,
+    });
+    if (!accepted) return;
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...player,
+          tradePartners: [...player.tradePartners, targetId],
+        },
+        [targetId]: {
+          ...target,
+          tradePartners: [...target.tradePartners, playerCountryId],
+        },
+      },
+    });
+    playSound('alliance');
+  },
+
+  cancelTradeAgreement: (targetId) => {
+    const { playerCountryId, nations } = get();
+    if (!playerCountryId) return;
+    const player = nations[playerCountryId];
+    const target = nations[targetId];
+    if (!player || !target) return;
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...player,
+          tradePartners: player.tradePartners.filter((id) => id !== targetId),
+          reputation: Math.max(
+            0,
+            player.reputation - BALANCE_POLITICS.reputationTradeBreakCost,
+          ),
+        },
+        [targetId]: {
+          ...target,
+          tradePartners: target.tradePartners.filter(
+            (id) => id !== playerCountryId,
+          ),
+        },
+      },
+    });
+  },
+
+  demandTribute: (targetId) => {
+    const { playerCountryId, nations, brains, countries } = get();
+    if (!playerCountryId || playerCountryId === targetId) return;
+    const player = nations[playerCountryId];
+    const target = nations[targetId];
+    const targetCountry = countries[targetId];
+    if (!player || !target || !targetCountry) return;
+    if (target.tributePaid[playerCountryId]) return; // already tributing us
+    const targetBrain = brains[targetId];
+    if (!targetBrain) return;
+    const decision = evaluateTributeDemand({
+      proposerId: playerCountryId,
+      targetId,
+      nations,
+      brain: targetBrain,
+      targetCountry,
+    });
+    if (decision.outcome === 'refuse') {
+      // Refusal = casus belli; auto-declare war.
+      set({
+        nations: setMutualStance(nations, playerCountryId, targetId, 'war'),
+      });
+      return;
+    }
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...player,
+          tributeReceived: {
+            ...player.tributeReceived,
+            [targetId]: decision.amount,
+          },
+        },
+        [targetId]: {
+          ...target,
+          tributePaid: {
+            ...target.tributePaid,
+            [playerCountryId]: decision.amount,
+          },
+        },
+      },
+    });
+    playSound('alliance');
+  },
+
+  cancelTribute: (targetId) => {
+    // Player releases tributary (good for reputation, bad for income).
+    const { playerCountryId, nations } = get();
+    if (!playerCountryId) return;
+    const player = nations[playerCountryId];
+    const target = nations[targetId];
+    if (!player || !target) return;
+    const newReceived = { ...player.tributeReceived };
+    delete newReceived[targetId];
+    const newPaid = { ...target.tributePaid };
+    delete newPaid[playerCountryId];
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...player,
+          tributeReceived: newReceived,
+          reputation: Math.min(100, player.reputation + 5),
+        },
+        [targetId]: {
+          ...target,
+          tributePaid: newPaid,
+        },
+      },
+    });
+  },
+
+  vassalize: (targetId) => {
+    const { playerCountryId, nations, brains, control } = get();
+    if (!playerCountryId || playerCountryId === targetId) return;
+    const player = nations[playerCountryId];
+    const target = nations[targetId];
+    if (!player || !target) return;
+    if (target.vassalOf) return; // already vassal of someone
+    const targetBrain = brains[targetId];
+    if (!targetBrain) return;
+    const targetControl = control[targetId] ?? 100;
+    const accepted = evaluateVassalizationOffer({
+      proposerId: playerCountryId,
+      targetId,
+      nations,
+      brain: targetBrain,
+      currentControl: targetControl,
+    });
+    if (!accepted) return;
+    set({
+      nations: setMutualStance(
+        {
+          ...nations,
+          [playerCountryId]: {
+            ...player,
+            vassals: [...player.vassals, targetId],
+          },
+          [targetId]: {
+            ...target,
+            vassalOf: playerCountryId,
+            // Drop existing alliances; vassal can't ally elsewhere.
+          },
+        },
+        playerCountryId,
+        targetId,
+        'allied',
+      ),
+    });
+    playSound('alliance');
+  },
+
+  releaseVassal: (vassalId) => {
+    const { playerCountryId, nations } = get();
+    if (!playerCountryId) return;
+    const player = nations[playerCountryId];
+    const vassal = nations[vassalId];
+    if (!player || !vassal) return;
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...player,
+          vassals: player.vassals.filter((id) => id !== vassalId),
+          reputation: Math.min(100, player.reputation + 8),
+        },
+        [vassalId]: {
+          ...vassal,
+          vassalOf: null,
+        },
       },
     });
   },

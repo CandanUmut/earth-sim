@@ -84,6 +84,27 @@ export const BALANCE_VICTORY = {
   populationShareToWin: 0.6,
 } as const;
 
+export const BALANCE_POLITICS = {
+  /** Gold income bonus per active trade partner, as a multiplier. */
+  tradePartnerGoldMul: 1.06,
+  /** Maximum number of trade partners that count for the bonus. */
+  maxTradePartners: 4,
+  /** Default tribute as a fraction of demanded nation's gold income. */
+  tributeFraction: 0.18,
+  /** Reputation cost for backstabbing an alliance. */
+  reputationBackstabCost: 30,
+  /** Reputation cost for breaking a trade agreement. */
+  reputationTradeBreakCost: 8,
+  /** Reputation gain per year of honored alliance/trade. */
+  reputationHonorGain: 4,
+  /** World population share above which a coalition forms against the player. */
+  coalitionThreshold: 0.27,
+  /** Vassal kicks back this fraction of their gold/tick to overlord. */
+  vassalTributeFraction: 0.25,
+  /** Max control level at which vassalization can be offered (target must be reduced). */
+  vassalizeMaxControl: 35,
+} as const;
+
 export const BALANCE_CONTROL = {
   fullControl: 100,
   damagePerVictoryMin: 35,

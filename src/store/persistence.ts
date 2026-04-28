@@ -51,12 +51,18 @@ export function readSave(): SavePayload | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SavePayload;
     if (parsed.version !== 4) return null;
-    // Defensive backfill: older v4 saves predating barracks have no field.
+    // Defensive backfill: older v4 saves predating barracks/politics fields.
     for (const id of Object.keys(parsed.nations)) {
-      const n = parsed.nations[id];
-      if (typeof (n as { barracksLevel?: number }).barracksLevel !== 'number') {
-        (n as { barracksLevel: number }).barracksLevel = 1;
-      }
+      const n = parsed.nations[id] as Partial<Nation> & { barracksLevel?: number };
+      if (typeof n.barracksLevel !== 'number') n.barracksLevel = 1;
+      if (typeof n.reputation !== 'number') n.reputation = 50;
+      if (!Array.isArray(n.tradePartners)) n.tradePartners = [];
+      if (!n.tributePaid || typeof n.tributePaid !== 'object')
+        n.tributePaid = {};
+      if (!n.tributeReceived || typeof n.tributeReceived !== 'object')
+        n.tributeReceived = {};
+      if (n.vassalOf === undefined) n.vassalOf = null;
+      if (!Array.isArray(n.vassals)) n.vassals = [];
     }
     if (!parsed.activeBattles) parsed.activeBattles = {};
     return parsed;

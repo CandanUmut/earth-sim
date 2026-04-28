@@ -500,9 +500,25 @@ export const useGameStore = create<GameState>((set, get) => ({
     });
 
     // Sound cues for the new battles + outcome.
+    // We deliberately reserve 'conquest' for the moment a NATION actually
+    // falls (loses its last tile). Individual tile flips during a long war
+    // would otherwise fire it constantly. Other resolved battles fall back
+    // to the quieter 'cannon' cue.
     if (result.newBattles.length > 0) {
-      const conquest = result.newBattles.some((b) => b.conquered);
-      if (conquest) playSound('conquest');
+      const tilesByOwnerBefore: Record<string, number> = {};
+      for (const owner of Object.values(s.ownership)) {
+        tilesByOwnerBefore[owner] = (tilesByOwnerBefore[owner] ?? 0) + 1;
+      }
+      const tilesByOwnerAfter: Record<string, number> = {};
+      for (const owner of Object.values(result.ownership)) {
+        tilesByOwnerAfter[owner] = (tilesByOwnerAfter[owner] ?? 0) + 1;
+      }
+      const nationFell = Object.keys(tilesByOwnerBefore).some(
+        (id) =>
+          (tilesByOwnerBefore[id] ?? 0) > 0 &&
+          (tilesByOwnerAfter[id] ?? 0) === 0,
+      );
+      if (nationFell) playSound('conquest');
       else playSound('cannon');
     }
 

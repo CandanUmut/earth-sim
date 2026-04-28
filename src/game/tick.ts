@@ -122,6 +122,7 @@ export type TickInput = {
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
   activeBattles: Record<string, ActiveBattle>;
+  garrisons: Record<string, Composition>;
   playerCountryId: string | null;
   homeCountryId: string | null;
   rng: () => number;
@@ -138,6 +139,7 @@ export type TickOutput = {
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
   activeBattles: Record<string, ActiveBattle>;
+  garrisons: Record<string, Composition>;
   newBattles: BattleLogEntry[];
   newArrivals: ArrivalEvent[];
   newEvents: GameEvent[];
@@ -774,6 +776,7 @@ function processActiveBattlesRound(input: {
   contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   activeBattles: Record<string, ActiveBattle>;
+  garrisons: Record<string, Composition>;
   tickCount: number;
   rng: () => number;
 }): {
@@ -783,6 +786,7 @@ function processActiveBattlesRound(input: {
   contestedBy: Record<string, string>;
   lastBattleTick: Record<string, number>;
   activeBattles: Record<string, ActiveBattle>;
+  garrisons: Record<string, Composition>;
   battles: BattleLogEntry[];
 } {
   let ownership = { ...input.ownership };
@@ -791,6 +795,7 @@ function processActiveBattlesRound(input: {
   let contestedBy = { ...input.contestedBy };
   let lastBattleTick = { ...input.lastBattleTick };
   let activeBattles = { ...input.activeBattles };
+  let garrisons = { ...input.garrisons };
   const { countries, tickCount, rng } = input;
   const battles: BattleLogEntry[] = [];
 
@@ -801,9 +806,22 @@ function processActiveBattlesRound(input: {
     if (!country) continue;
     const defenderOwnerId = ownership[locId] ?? battle.defenderOwnerId;
     const defenderNation = nations[defenderOwnerId];
-    const defenderForce = defenderNation
+    const garrisonAtTile = garrisons[locId] ?? {
+      infantry: 0,
+      cavalry: 0,
+      artillery: 0,
+    };
+    // Defender = nation pool (only if this is their home, otherwise just
+    // the garrison stationed here). For the home country, garrison adds.
+    const isHome = defenderOwnerId === locId;
+    const baseDefender = defenderNation && isHome
       ? asComposition(defenderNation)
       : { infantry: 0, cavalry: 0, artillery: 0 };
+    const defenderForce: Composition = {
+      infantry: baseDefender.infantry + garrisonAtTile.infantry,
+      cavalry: baseDefender.cavalry + garrisonAtTile.cavalry,
+      artillery: baseDefender.artillery + garrisonAtTile.artillery,
+    };
     const defenderTech = defenderNation?.tech ?? 1;
     const defenderUnlockedTech = defenderNation?.unlockedTech ?? [];
 
@@ -941,15 +959,53 @@ function processActiveBattlesRound(input: {
         battle.attackerForce.artillery - round.attackerLosses.artillery,
       ),
     };
-    // Apply defender losses to defender nation pool directly.
-    if (defenderNation) {
-      nations = {
-        ...nations,
-        [defenderOwnerId]: subtractLossesFromNation(
-          defenderNation,
-          round.defenderLosses,
-        ),
+    // Distribute defender losses: garrison eats losses first (it's the front
+    // line at this tile), then any remaining hits the nation pool. For non-
+    // home tiles only the garrison can take losses.
+    {
+      const lossInf = round.defenderLosses.infantry;
+      const lossCav = round.defenderLosses.cavalry;
+      const lossArt = round.defenderLosses.artillery;
+      const fromGarrInf = Math.min(lossInf, garrisonAtTile.infantry);
+      const fromGarrCav = Math.min(lossCav, garrisonAtTile.cavalry);
+      const fromGarrArt = Math.min(lossArt, garrisonAtTile.artillery);
+      const newGarr: Composition = {
+        infantry: garrisonAtTile.infantry - fromGarrInf,
+        cavalry: garrisonAtTile.cavalry - fromGarrCav,
+        artillery: garrisonAtTile.artillery - fromGarrArt,
       };
+      const garrEmpty =
+        newGarr.infantry === 0 &&
+        newGarr.cavalry === 0 &&
+        newGarr.artillery === 0;
+      if (garrEmpty) {
+        const next = { ...garrisons };
+        delete next[locId];
+        garrisons = next;
+      } else if (
+        newGarr.infantry !== garrisonAtTile.infantry ||
+        newGarr.cavalry !== garrisonAtTile.cavalry ||
+        newGarr.artillery !== garrisonAtTile.artillery
+      ) {
+        garrisons = { ...garrisons, [locId]: newGarr };
+      }
+      const remainingInf = lossInf - fromGarrInf;
+      const remainingCav = lossCav - fromGarrCav;
+      const remainingArt = lossArt - fromGarrArt;
+      if (
+        defenderNation &&
+        isHome &&
+        (remainingInf > 0 || remainingCav > 0 || remainingArt > 0)
+      ) {
+        nations = {
+          ...nations,
+          [defenderOwnerId]: subtractLossesFromNation(defenderNation, {
+            infantry: remainingInf,
+            cavalry: remainingCav,
+            artillery: remainingArt,
+          }),
+        };
+      }
     }
     const totalAttackerLossesThisRound =
       round.attackerLosses.infantry +
@@ -992,6 +1048,10 @@ function processActiveBattlesRound(input: {
       const cleared = { ...contestedBy };
       delete cleared[locId];
       contestedBy = cleared;
+      // Old garrison goes with the old owner (already drained in losses).
+      const ng = { ...garrisons };
+      delete ng[locId];
+      garrisons = ng;
       // Reabsorb survivors + 30 % of defender stragglers into attacker home pool.
       const refreshed = nations[battle.attackerOwnerId];
       let absorbed: Composition = { ...newAttackerForce };
@@ -1139,6 +1199,7 @@ function processActiveBattlesRound(input: {
     contestedBy,
     lastBattleTick,
     activeBattles,
+    garrisons,
     battles,
   };
 }
@@ -1327,6 +1388,7 @@ export function runTick(input: TickInput): TickOutput {
     contestedBy,
     lastBattleTick,
     activeBattles,
+    garrisons: input.garrisons,
     tickCount: input.tickCount,
     rng: input.rng,
   });
@@ -1335,6 +1397,7 @@ export function runTick(input: TickInput): TickOutput {
   control = battleStep.control;
   contestedBy = battleStep.contestedBy;
   lastBattleTick = battleStep.lastBattleTick;
+  let garrisons = battleStep.garrisons;
   activeBattles = battleStep.activeBattles;
   allBattleEntries.push(...battleStep.battles);
 
@@ -1416,9 +1479,13 @@ export function runTick(input: TickInput): TickOutput {
     }
   }
 
-  // Rebellion check: each tick, a small chance per conquered tile of an
-  // anti-occupier uprising. Probability scales with how many tiles the
-  // owner has conquered (fragility from over-extension).
+  // Rebellion check: very small chance per conquered tile per tick of an
+  // uprising. Tiles with garrisons are heavily protected; recently-conquered
+  // tiles (within 2 in-game years) are off-limits — the player just won them.
+  // When a rebellion fires, we don't pop the tile — we contest it (control
+  // drops, attacker is set to the original owner). Player still has to fight
+  // it back if they want to keep it; if they let it slide, control eventually
+  // hits 0 and they lose the tile, but the player has time to react.
   {
     const ownedCounts: Record<string, number> = {};
     for (const owner of Object.values(ownership)) {
@@ -1427,15 +1494,33 @@ export function runTick(input: TickInput): TickOutput {
     for (const id of Object.keys(ownership)) {
       const owner = ownership[id];
       if (!owner || owner === id) continue;
+      // Skip if recently conquered or already contested.
+      const lastBattle = lastBattleTick[id] ?? -Infinity;
+      if (input.tickCount - lastBattle < 24) continue;
+      if (contestedBy[id]) continue;
+
       const empireSize = ownedCounts[owner] ?? 1;
-      // Below 4 tiles the empire is solid. Above that, ~0.4 % * (size−3) per tile.
-      const prob = Math.min(0.04, Math.max(0, (empireSize - 3) * 0.004));
+      // Garrison strength reduction: each garrison troop lowers prob by
+      // a fraction. A 50-strong garrison cuts chance to near zero.
+      const garrison = input.garrisons[id];
+      const garrisonStr = garrison
+        ? garrison.infantry + garrison.cavalry + garrison.artillery
+        : 0;
+      const garrisonReduction = Math.min(0.95, garrisonStr / 60);
+
+      // Base chance only kicks in for empires of 6+ tiles, and is small.
+      const baseSize = Math.max(0, empireSize - 5) * 0.0006;
+      const prob = baseSize * (1 - garrisonReduction);
       if (input.rng() < prob) {
-        ownership = { ...ownership, [id]: id };
-        control = { ...control, [id]: BALANCE_CONTROL.fullControl };
-        const cleared = { ...contestedBy };
-        delete cleared[id];
-        contestedBy = cleared;
+        // Contest the tile rather than insta-flip. Original owner is the
+        // "attacker" reclaiming. Drop control significantly.
+        const before = control[id] ?? BALANCE_CONTROL.fullControl;
+        control = {
+          ...control,
+          [id]: Math.max(15, before - 40),
+        };
+        contestedBy = { ...contestedBy, [id]: id };
+        lastBattleTick = { ...lastBattleTick, [id]: input.tickCount };
       }
     }
   }
@@ -1499,7 +1584,15 @@ export function runTick(input: TickInput): TickOutput {
           };
         }
       }
-      // Ownership change (peasant revolt).
+      // Peasant revolt — contest the tile (don't insta-flip).
+      if (result.event.kind === 'peasant_revolt') {
+        const tileId = result.event.targetId;
+        const before = control[tileId] ?? BALANCE_CONTROL.fullControl;
+        control = { ...control, [tileId]: Math.max(20, before - 50) };
+        contestedBy = { ...contestedBy, [tileId]: tileId };
+        lastBattleTick = { ...lastBattleTick, [tileId]: input.tickCount };
+      }
+      // Legacy ownership-change path (none of our events use it now).
       if (result.ownershipChange) {
         const { countryId, newOwner } = result.ownershipChange;
         ownership = { ...ownership, [countryId]: newOwner };
@@ -1536,6 +1629,7 @@ export function runTick(input: TickInput): TickOutput {
     brains,
     movements,
     activeBattles,
+    garrisons,
     newBattles: allBattleEntries,
     newArrivals: moveStep.arrivals,
     newEvents,

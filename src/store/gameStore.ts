@@ -105,6 +105,8 @@ export type GameState = {
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   activeBattles: Record<string, ActiveBattle>;
+  /** Garrison troops stationed at conquered tiles. Map: tileId → composition. */
+  garrisons: Record<string, Composition>;
   eventLog: GameEvent[];
   /** Newest events queued for toast UI, then drained. */
   unreadEvents: GameEvent[];
@@ -178,6 +180,13 @@ export type GameState = {
   /** Auto-dispatch a balanced force from the closest owned territory (50% of
    *  available, minus garrison). Used by shift-click and War Room. */
   quickDispatch: (toId: string) => void;
+  /** Move troops from the player's home pool into a tile's garrison. */
+  garrisonTile: (tileId: string, composition: Composition) => void;
+  /** Pull all garrison troops at a tile back into the home pool. */
+  withdrawGarrison: (tileId: string) => void;
+  /** Spend gold to give the defenders at a tile a temporary morale boost
+   *  (rally). Currently it adds a small amount of garrison troops. */
+  rallyDefenders: (tileId: string) => void;
 };
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -224,6 +233,7 @@ const initialState = {
   lastBattleTick: {} as Record<string, number>,
   movements: [] as TroopMovement[],
   activeBattles: {} as Record<string, ActiveBattle>,
+  garrisons: {} as Record<string, Composition>,
   eventLog: [] as GameEvent[],
   unreadEvents: [] as GameEvent[],
   difficulty: 'normal' as Difficulty,
@@ -443,6 +453,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastBattleTick: s.lastBattleTick,
       movements: s.movements,
       activeBattles: s.activeBattles,
+      garrisons: s.garrisons,
       playerCountryId: s.playerCountryId,
       homeCountryId: s.homeCountryId,
       rng: Math.random,
@@ -491,6 +502,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastBattleTick: result.lastBattleTick,
       movements: result.movements,
       activeBattles: result.activeBattles,
+      garrisons: result.garrisons,
       eventLog,
       unreadEvents,
       battleLog,
@@ -543,6 +555,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         lastBattleTick: now2.lastBattleTick,
         movements: now2.movements,
         activeBattles: now2.activeBattles,
+        garrisons: now2.garrisons,
         battleLog: now2.battleLog,
         populations: now2.populations,
         date: now2.date,
@@ -1018,6 +1031,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastBattleTick: save.lastBattleTick,
       movements: save.movements,
       activeBattles: save.activeBattles ?? {},
+      garrisons: save.garrisons ?? {},
       battleLog: save.battleLog,
       populations: save.populations ?? get().populations,
       arrivalTrails: [],
@@ -1122,6 +1136,102 @@ export const useGameStore = create<GameState>((set, get) => ({
     playSound('march');
   },
 
+  garrisonTile: (tileId, composition) => {
+    const { playerCountryId, nations, ownership, garrisons } = get();
+    if (!playerCountryId) return;
+    if (ownership[tileId] !== playerCountryId) return;
+    if (tileId === playerCountryId) return; // home country uses nation pool
+    const player = nations[playerCountryId];
+    if (!player) return;
+    const sendInf = Math.max(0, Math.min(composition.infantry, player.infantry));
+    const sendCav = Math.max(0, Math.min(composition.cavalry, player.cavalry));
+    const sendArt = Math.max(0, Math.min(composition.artillery, player.artillery));
+    const total = sendInf + sendCav + sendArt;
+    if (total <= 0) return;
+    const existing = garrisons[tileId] ?? {
+      infantry: 0,
+      cavalry: 0,
+      artillery: 0,
+    };
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...player,
+          infantry: player.infantry - sendInf,
+          cavalry: player.cavalry - sendCav,
+          artillery: player.artillery - sendArt,
+        },
+      },
+      garrisons: {
+        ...garrisons,
+        [tileId]: {
+          infantry: existing.infantry + sendInf,
+          cavalry: existing.cavalry + sendCav,
+          artillery: existing.artillery + sendArt,
+        },
+      },
+    });
+    playSound('march');
+  },
+
+  withdrawGarrison: (tileId) => {
+    const { playerCountryId, nations, ownership, garrisons } = get();
+    if (!playerCountryId) return;
+    if (ownership[tileId] !== playerCountryId) return;
+    const player = nations[playerCountryId];
+    const garr = garrisons[tileId];
+    if (!player || !garr) return;
+    const next = { ...garrisons };
+    delete next[tileId];
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...player,
+          infantry: player.infantry + garr.infantry,
+          cavalry: player.cavalry + garr.cavalry,
+          artillery: player.artillery + garr.artillery,
+        },
+      },
+      garrisons: next,
+    });
+    playSound('march');
+  },
+
+  rallyDefenders: (tileId) => {
+    // Spend gold to summon a small militia: +12 infantry to the tile's
+    // garrison. Quick defensive intervention for an active battle on your
+    // soil. Costs scale with how many times you've already rallied here
+    // this campaign — but for v1 a flat 60g.
+    const RALLY_COST = 60;
+    const RALLY_TROOPS = 12;
+    const { playerCountryId, nations, ownership, garrisons } = get();
+    if (!playerCountryId) return;
+    if (ownership[tileId] !== playerCountryId) return;
+    const player = nations[playerCountryId];
+    if (!player || player.gold < RALLY_COST) return;
+    const existing = garrisons[tileId] ?? {
+      infantry: 0,
+      cavalry: 0,
+      artillery: 0,
+    };
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: { ...player, gold: player.gold - RALLY_COST },
+      },
+      garrisons: {
+        ...garrisons,
+        [tileId]: {
+          ...existing,
+          infantry: existing.infantry + RALLY_TROOPS,
+        },
+      },
+    });
+    playSound('march');
+  },
+
   saveNow: () => {
     const s = get();
     if (!s.gameStarted || !s.playerCountryId) return;
@@ -1136,6 +1246,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastBattleTick: s.lastBattleTick,
       movements: s.movements,
       activeBattles: s.activeBattles,
+      garrisons: s.garrisons,
       battleLog: s.battleLog,
       populations: s.populations,
       date: s.date,

@@ -148,11 +148,13 @@ export function rollWorldEvent(args: EventTrigger): EventResult | null {
     }
     case 'peasant_revolt': {
       // A revolt fires on a tile owned by someone other than its home country.
+      // We no longer insta-flip the tile (that felt arbitrary); instead the
+      // tile becomes contested with the original homeland reclaiming. The
+      // player has time to march troops and put it down.
       const conqueredTiles = args.countryOrder.filter(
         (id) => args.ownership[id] !== id,
       );
       if (conqueredTiles.length === 0) return null;
-      // Bias toward player's recently conquered ones if they're leading.
       const playerConq = conqueredTiles.filter(
         (id) => args.ownership[id] === args.playerCountryId,
       );
@@ -165,12 +167,12 @@ export function rollWorldEvent(args: EventTrigger): EventResult | null {
           tick: args.tickCount,
           kind,
           targetId,
-          message: `Peasants revolt. Territory breaks free.`,
+          message: `Peasants revolt. ${targetId} contested — march troops or lose it.`,
         },
         populationDelta: {},
         goldDelta: {},
         troopDelta: {},
-        ownershipChange: { countryId: targetId, newOwner: targetId },
+        // No ownership change. Tick.ts handles the contest below.
       };
     }
     case 'gold_rush': {

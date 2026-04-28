@@ -21,6 +21,9 @@ import {
   barracksQuickButtons,
   type TroopType,
 } from '../game/economy';
+import { BALANCE_BARRACKS } from '../game/balance';
+
+const BARRACKS_COST_MUL = BALANCE_BARRACKS.costMultiplier;
 
 function fmtNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -140,7 +143,11 @@ export default function PlayerHUD() {
         </span>
       </div>
 
-      <div className="flex items-center justify-between" style={{ padding: '4px 0 4px' }}>
+      <div
+        className="flex items-center justify-between"
+        style={{ padding: '4px 0 4px' }}
+        title={`Barracks Level ${nation.barracksLevel}\n• Bulk-buy cap: ${barracksBulkCap(nation.barracksLevel)} troops at once\n• Per-unit recruit cost: ×${(BARRACKS_COST_MUL[nation.barracksLevel] ?? 1).toFixed(2)}\nUpgrade to recruit larger armies in fewer clicks at a discount.`}
+      >
         <div className="flex items-center gap-2" style={{ color: 'var(--ink-faded)' }}>
           <Hammer size={14} />
           <span style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>

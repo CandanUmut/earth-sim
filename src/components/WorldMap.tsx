@@ -7,6 +7,7 @@ import MovementArrows from './MovementArrows';
 import BattleFlashes from './BattleFlashes';
 import BattleAnimations from './BattleAnimations';
 import CountryAnnotations from './CountryAnnotations';
+import WarMarkers from './WarMarkers';
 
 type Size = { w: number; h: number };
 
@@ -105,10 +106,18 @@ export default function WorldMap() {
     zoomRef.current = zoom;
 
     const onWheel = (e: WheelEvent) => {
+      // Honor wheel without any modifier (plain scroll) — browsers send
+      // ctrlKey=true on touchpad pinch so we accept either case.
       e.preventDefault();
+      e.stopPropagation();
       const t = d3.zoomTransform(svgEl);
-      const direction = e.deltaY < 0 ? 1 : -1;
-      const factor = Math.pow(1.2, direction);
+      // ctrlKey wheel events on touchpads tend to have larger deltas; clamp.
+      const rawDelta = e.deltaY;
+      const direction = rawDelta < 0 ? 1 : -1;
+      // Smaller step on touchpad (deltaY tends to be 1–10) vs mouse wheel
+      // (deltaY 100+).
+      const stepBase = Math.abs(rawDelta) > 30 ? 1.2 : 1.08;
+      const factor = Math.pow(stepBase, direction);
       const newK = Math.max(0.6, Math.min(12, t.k * factor));
       if (newK === t.k) return;
       const rect = svgEl.getBoundingClientRect();
@@ -121,7 +130,10 @@ export default function WorldMap() {
         d3.zoomIdentity.translate(newTx, newTy).scale(newK),
       );
     };
-    svgEl.addEventListener('wheel', onWheel, { passive: false });
+    // capture:true so we beat any other wheel listeners up the tree, and
+    // touchAction:none so browsers don't try to pan the page on touchpads.
+    svgEl.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    svgEl.style.touchAction = 'none';
 
     svgEl.style.cursor = 'grab';
     sel.on('mousedown.cursor', () => {
@@ -134,7 +146,7 @@ export default function WorldMap() {
       sel.on('.zoom', null);
       sel.on('mousedown.cursor', null);
       sel.on('mouseup.cursor', null);
-      svgEl.removeEventListener('wheel', onWheel);
+      svgEl.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
     };
   }, [w, h]);
 
@@ -463,6 +475,7 @@ export default function WorldMap() {
             playerStance={playerStance}
           />
           <BattleFlashes projection={pathD.projection} />
+          <WarMarkers projection={pathD.projection} />
           <BattleAnimations projection={pathD.projection} />
           <CountryAnnotations projection={pathD.projection} />
         </g>

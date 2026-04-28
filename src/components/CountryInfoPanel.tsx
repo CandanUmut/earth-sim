@@ -93,6 +93,13 @@ export default function CountryInfoPanel() {
   const cancelTribute = useGameStore((s) => s.cancelTribute);
   const vassalize = useGameStore((s) => s.vassalize);
   const releaseVassal = useGameStore((s) => s.releaseVassal);
+  const garrisonAtSelected = useGameStore((s) =>
+    s.selectedCountryId ? s.garrisons[s.selectedCountryId] ?? null : null,
+  );
+  const garrisonTile = useGameStore((s) => s.garrisonTile);
+  const withdrawGarrison = useGameStore((s) => s.withdrawGarrison);
+  const rallyDefenders = useGameStore((s) => s.rallyDefenders);
+  const homeId = useGameStore((s) => s.homeCountryId);
 
   const isPlayer = selectedId !== null && selectedId === playerId;
 
@@ -289,6 +296,21 @@ export default function CountryInfoPanel() {
             </div>
           )}
 
+          {gameStarted &&
+            playerId &&
+            playerOwnsThis &&
+            selectedId !== homeId && (
+              <GarrisonSection
+                tileId={selectedId}
+                garrison={garrisonAtSelected}
+                contested={control < 100}
+                playerNation={playerNation}
+                onGarrison={(c) => garrisonTile(selectedId, c)}
+                onWithdraw={() => withdrawGarrison(selectedId)}
+                onRally={() => rallyDefenders(selectedId)}
+              />
+            )}
+
           {gameStarted && playerId && !playerOwnsThis && ownerId && (
             <DiplomacySection
               stance={stanceToPlayer}
@@ -314,6 +336,136 @@ export default function CountryInfoPanel() {
         </motion.aside>
       )}
     </AnimatePresence>
+  );
+}
+
+function GarrisonSection({
+  garrison,
+  contested,
+  playerNation,
+  onGarrison,
+  onWithdraw,
+  onRally,
+}: {
+  tileId: string;
+  garrison: { infantry: number; cavalry: number; artillery: number } | null;
+  contested: boolean;
+  playerNation: Nation | null;
+  onGarrison: (c: { infantry: number; cavalry: number; artillery: number }) => void;
+  onWithdraw: () => void;
+  onRally: () => void;
+}) {
+  const totalGarr = garrison
+    ? garrison.infantry + garrison.cavalry + garrison.artillery
+    : 0;
+  // Quick preset: send 25 % of player's home pool as garrison.
+  const presetGarrison = () => {
+    if (!playerNation) return;
+    const f = (n: number) => Math.max(0, Math.floor(n * 0.25));
+    onGarrison({
+      infantry: f(playerNation.infantry),
+      cavalry: f(playerNation.cavalry),
+      artillery: f(playerNation.artillery),
+    });
+  };
+  const canRally = (playerNation?.gold ?? 0) >= 60;
+
+  return (
+    <div
+      style={{
+        borderTop: '1px solid var(--ink-faded)',
+        marginTop: 14,
+        paddingTop: 14,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+          color: 'var(--ink-faded)',
+          marginBottom: 8,
+        }}
+      >
+        Hold This Land
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--ink-faded)',
+          fontStyle: 'italic',
+          marginBottom: 8,
+        }}
+      >
+        Garrison: <span className="num">{totalGarr}</span>{' '}
+        {garrison &&
+          `(${garrison.infantry}i · ${garrison.cavalry}c · ${garrison.artillery}a)`}
+        . A garrison defends this tile if attacked AND prevents rebellions.
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <motion.button
+          type="button"
+          whileTap={{ scale: 0.95 }}
+          transition={{ duration: 0.08 }}
+          onClick={presetGarrison}
+          disabled={!playerNation}
+          style={{
+            background: 'transparent',
+            color: 'var(--ink)',
+            border: '1px solid var(--ink)',
+            padding: '6px 10px',
+            fontFamily: '"Crimson Pro", serif',
+            fontSize: 12,
+            cursor: 'pointer',
+          }}
+          title="Move 25% of your home pool here as a garrison."
+        >
+          Garrison +25 %
+        </motion.button>
+        <motion.button
+          type="button"
+          whileTap={{ scale: 0.95 }}
+          transition={{ duration: 0.08 }}
+          onClick={onWithdraw}
+          disabled={totalGarr === 0}
+          style={{
+            background: 'transparent',
+            color: totalGarr > 0 ? 'var(--ink)' : 'var(--ink-faded)',
+            border: `1px solid ${totalGarr > 0 ? 'var(--ink)' : 'var(--ink-faded)'}`,
+            padding: '6px 10px',
+            fontFamily: '"Crimson Pro", serif',
+            fontSize: 12,
+            cursor: totalGarr > 0 ? 'pointer' : 'not-allowed',
+            opacity: totalGarr > 0 ? 1 : 0.5,
+          }}
+          title="Pull garrison troops back to your home pool."
+        >
+          Withdraw
+        </motion.button>
+        {contested && (
+          <motion.button
+            type="button"
+            whileTap={{ scale: 0.95 }}
+            transition={{ duration: 0.08 }}
+            onClick={onRally}
+            disabled={!canRally}
+            style={{
+              background: canRally ? 'var(--accent-blood)' : 'transparent',
+              color: canRally ? 'var(--paper)' : 'var(--ink-faded)',
+              border: `1px solid ${canRally ? 'var(--accent-blood)' : 'var(--ink-faded)'}`,
+              padding: '6px 10px',
+              fontFamily: '"Crimson Pro", serif',
+              fontSize: 12,
+              cursor: canRally ? 'pointer' : 'not-allowed',
+              opacity: canRally ? 1 : 0.5,
+            }}
+            title="Rally a quick militia (+12 inf garrison) for 60 g."
+          >
+            ⚔ Rally Defenders (60g)
+          </motion.button>
+        )}
+      </div>
+    </div>
   );
 }
 

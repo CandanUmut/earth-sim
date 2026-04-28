@@ -1,4 +1,4 @@
-import type { Nation } from '../game/economy';
+import type { Composition, Nation } from '../game/economy';
 import type { GameDate, BattleLogEntry } from '../game/tick';
 import type { TroopMovement } from '../game/movement';
 import type { AIBrain } from '../game/ai';
@@ -19,6 +19,7 @@ export type SavePayload = {
   lastBattleTick: Record<string, number>;
   movements: TroopMovement[];
   activeBattles: Record<string, ActiveBattle>;
+  garrisons: Record<string, Composition>;
   battleLog: BattleLogEntry[];
   populations: Record<string, number>;
   date: GameDate;
@@ -65,6 +66,7 @@ export function readSave(): SavePayload | null {
       if (!Array.isArray(n.vassals)) n.vassals = [];
     }
     if (!parsed.activeBattles) parsed.activeBattles = {};
+    if (!parsed.garrisons) parsed.garrisons = {};
     return parsed;
   } catch {
     return null;

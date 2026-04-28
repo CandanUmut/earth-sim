@@ -103,7 +103,7 @@ export default function BattleAnimations({ projection }: Props) {
 
           const elements: JSX.Element[] = [];
           // Smoke cloud (low-opacity ellipse pulsing).
-          const smokeR = 9 + Math.sin(now / 600) * 1.2;
+          const smokeR = 11 + Math.sin(now / 600) * 1.6;
           elements.push(
             <ellipse
               key="smoke"
@@ -111,10 +111,61 @@ export default function BattleAnimations({ projection }: Props) {
               cy={p[1]}
               rx={smokeR}
               ry={smokeR * 0.55}
-              fill="rgba(120,110,100,0.18)"
+              fill="rgba(80,72,62,0.24)"
               vectorEffect="non-scaling-stroke"
             />,
+            // Inner darker smoke
+            <ellipse
+              key="smoke2"
+              cx={p[0]}
+              cy={p[1] - 1}
+              rx={smokeR * 0.65}
+              ry={smokeR * 0.32}
+              fill="rgba(40,34,26,0.28)"
+              vectorEffect="non-scaling-stroke"
+            />,
+            // Two faction flags so you can read the front lines at a glance.
+            <g key="flag-atk" transform={`translate(${p[0] - 11} ${p[1] - 2})`}>
+              <line
+                x1={0}
+                y1={0}
+                x2={0}
+                y2={6}
+                stroke="var(--ink)"
+                strokeWidth={0.3}
+                vectorEffect="non-scaling-stroke"
+              />
+              <rect x={0} y={0} width={3.2} height={2} fill={attackerColor} stroke="var(--ink)" strokeWidth={0.18} vectorEffect="non-scaling-stroke" />
+            </g>,
+            <g key="flag-def" transform={`translate(${p[0] + 11} ${p[1] - 2})`}>
+              <line
+                x1={0}
+                y1={0}
+                x2={0}
+                y2={6}
+                stroke="var(--ink)"
+                strokeWidth={0.3}
+                vectorEffect="non-scaling-stroke"
+              />
+              <rect x={-3.2} y={0} width={3.2} height={2} fill={defenderColor} stroke="var(--ink)" strokeWidth={0.18} vectorEffect="non-scaling-stroke" />
+            </g>,
           );
+          // Central spark / muzzle flash flicker.
+          {
+            const flickerPhase = (now / 130) % 1;
+            if (flickerPhase < 0.18) {
+              elements.push(
+                <circle
+                  key="spark"
+                  cx={p[0]}
+                  cy={p[1]}
+                  r={1.6 + Math.random() * 0.6}
+                  fill="#ffd55a"
+                  opacity={0.85}
+                />,
+              );
+            }
+          }
 
           for (let i = 0; i < ATTACKER_DOTS_MAX; i++) {
             const live = i < atkDots;

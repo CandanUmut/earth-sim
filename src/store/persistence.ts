@@ -4,11 +4,11 @@ import type { TroopMovement } from '../game/movement';
 import type { AIBrain } from '../game/ai';
 import type { VictoryState } from '../game/victory';
 
-const SAVE_KEY = 'terra-bellum-save-v3';
-const TUTORIAL_KEY = 'terra-bellum-tutorial-seen-v1';
+const SAVE_KEY = 'terra-bellum-save-v4';
+const TUTORIAL_KEY = 'terra-bellum-tutorial-seen-v2';
 
 export type SavePayload = {
-  version: 3;
+  version: 4;
   savedAt: number;
   ownership: Record<string, string>;
   nations: Record<string, Nation>;
@@ -48,7 +48,14 @@ export function readSave(): SavePayload | null {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SavePayload;
-    if (parsed.version !== 3) return null;
+    if (parsed.version !== 4) return null;
+    // Defensive backfill: older v4 saves predating barracks have no field.
+    for (const id of Object.keys(parsed.nations)) {
+      const n = parsed.nations[id];
+      if (typeof (n as { barracksLevel?: number }).barracksLevel !== 'number') {
+        (n as { barracksLevel: number }).barracksLevel = 1;
+      }
+    }
     return parsed;
   } catch {
     return null;
@@ -60,6 +67,7 @@ export function clearSave(): void {
     localStorage.removeItem(SAVE_KEY);
     localStorage.removeItem('terra-bellum-save-v1');
     localStorage.removeItem('terra-bellum-save-v2');
+    localStorage.removeItem('terra-bellum-save-v3');
   } catch {
     // ignore
   }

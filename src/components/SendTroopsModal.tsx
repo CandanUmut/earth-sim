@@ -357,8 +357,10 @@ export default function SendTroopsModal() {
           )}
 
           <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
-            <button
+            <motion.button
               type="button"
+              whileTap={{ scale: 0.95 }}
+              transition={{ duration: 0.08 }}
               onClick={closeDispatch}
               style={{
                 flex: 1,
@@ -372,9 +374,13 @@ export default function SendTroopsModal() {
               }}
             >
               Cancel
-            </button>
-            <button
+            </motion.button>
+            <motion.button
               type="button"
+              whileTap={
+                reachable && totalSend > 0 ? { scale: 0.94 } : undefined
+              }
+              transition={{ duration: 0.08 }}
               disabled={!reachable || totalSend <= 0}
               onClick={() => {
                 if (totalSend > 0) dispatchTroops(targetId, send);
@@ -396,7 +402,7 @@ export default function SendTroopsModal() {
               }}
             >
               Dispatch
-            </button>
+            </motion.button>
           </div>
         </motion.div>
       </motion.div>

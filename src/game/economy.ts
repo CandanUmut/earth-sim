@@ -1,5 +1,5 @@
 import type { Country, Specialization } from './world';
-import { BALANCE, BALANCE_TROOPS, BALANCE_SPECS } from './balance';
+import { BALANCE, BALANCE_TROOPS, BALANCE_SPECS, BALANCE_BARRACKS } from './balance';
 import {
   goldIncomeMultiplier,
   recruitCostMultiplier,
@@ -24,6 +24,8 @@ export type Nation = {
   unlockedTech: TechNodeId[];
   /** Auto-recruit toggle (only honored if log_conscription unlocked). */
   autoRecruit: boolean;
+  /** Barracks level 1–5; raises bulk-recruit cap and shaves recruit cost. */
+  barracksLevel: number;
 };
 
 export const TROOP_LABELS: Record<TroopType, string> = {
@@ -66,6 +68,7 @@ export function makeStartingNation(country: Country): Nation {
     stance: {},
     unlockedTech: [],
     autoRecruit: false,
+    barracksLevel: 1,
   };
 }
 
@@ -101,11 +104,12 @@ export function maxTroops(country: Country): number {
   return baseCap;
 }
 
-/** Cost of recruiting one unit, after specializations and tech discounts. */
+/** Cost of recruiting one unit, after specializations, tech and barracks discounts. */
 export function recruitCost(
   type: TroopType,
   specs: Specialization[],
   unlockedTech: TechNodeId[] = [],
+  barracksLevel: number = 1,
 ): number {
   let cost: number = BALANCE_TROOPS.cost[type];
   if (type === 'cavalry' && specs.includes('horseBreeders')) {
@@ -113,7 +117,33 @@ export function recruitCost(
   } else if (type === 'artillery' && specs.includes('industrial')) {
     cost = Math.max(1, cost - BALANCE_SPECS.industrial.artilleryDiscount);
   }
-  return Math.max(1, Math.round(cost * recruitCostMultiplier(unlockedTech)));
+  const bIdx = clampBarracksLevel(barracksLevel);
+  const barracksMul = BALANCE_BARRACKS.costMultiplier[bIdx];
+  return Math.max(
+    1,
+    Math.round(cost * recruitCostMultiplier(unlockedTech) * barracksMul),
+  );
+}
+
+function clampBarracksLevel(level: number): number {
+  if (!Number.isFinite(level)) return 1;
+  return Math.max(1, Math.min(BALANCE_BARRACKS.maxLevel, Math.floor(level)));
+}
+
+/** Gold cost to upgrade barracks from `currentLevel` → `currentLevel + 1`.
+ *  Returns null if already at max. */
+export function barracksUpgradeCost(currentLevel: number): number | null {
+  const next = clampBarracksLevel(currentLevel) + 1;
+  if (next > BALANCE_BARRACKS.maxLevel) return null;
+  return BALANCE_BARRACKS.upgradeCosts[next];
+}
+
+export function barracksBulkCap(level: number): number {
+  return BALANCE_BARRACKS.bulkCap[clampBarracksLevel(level)];
+}
+
+export function barracksQuickButtons(level: number): readonly number[] {
+  return BALANCE_BARRACKS.quickButtons[clampBarracksLevel(level)];
 }
 
 export function techInvestmentCost(): number {

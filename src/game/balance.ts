@@ -101,3 +101,27 @@ export const BALANCE_SPECS = {
   industrial: { artilleryDiscount: 10 },
   scholarly: { techRoiMul: 1.5 },
 } as const;
+
+/**
+ * Barracks: an upgradeable building. Level 1 is starting tier (no upgrade).
+ * Higher levels enlarge the bulk-recruit batch cap and shave a small
+ * percentage off per-unit recruitment cost.
+ */
+export const BALANCE_BARRACKS = {
+  maxLevel: 5,
+  /** Index by next-level (level 2 → upgradeCosts[2]). Level 1 is free start. */
+  upgradeCosts: [0, 0, 250, 600, 1400, 3000] as const,
+  /** Multiplier applied to per-unit recruit cost. Level 1 = 1.0. */
+  costMultiplier: [1.0, 1.0, 0.95, 0.9, 0.85, 0.8] as const,
+  /** Largest bulk batch the player can buy at once. Level 1 = 25. */
+  bulkCap: [0, 25, 75, 200, 500, 1500] as const,
+  /** Quick-buy buttons at this level. */
+  quickButtons: [
+    [],
+    [5, 25],
+    [25, 75],
+    [50, 200],
+    [100, 500],
+    [250, 1500],
+  ] as const,
+} as const;

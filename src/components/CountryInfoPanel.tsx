@@ -386,8 +386,11 @@ function DiploButton({
   accent: string;
 }) {
   return (
-    <button
+    <motion.button
       type="button"
+      whileTap={enabled ? { scale: 0.94 } : undefined}
+      whileHover={enabled ? { backgroundColor: 'rgba(26,24,20,0.04)' } : undefined}
+      transition={{ duration: 0.08 }}
       disabled={!enabled}
       onClick={onClick}
       style={{
@@ -417,7 +420,7 @@ function DiploButton({
       >
         {label}
       </span>
-    </button>
+    </motion.button>
   );
 }
 

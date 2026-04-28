@@ -8,6 +8,8 @@ import {
   techIncrement,
   maxTroops,
   totalTroops,
+  barracksUpgradeCost,
+  barracksBulkCap,
   type Nation,
   type Stance,
   type TroopType,
@@ -110,6 +112,7 @@ export type GameState = {
   togglePaused: () => void;
   setSpeed: (speed: Speed) => void;
   recruit: (type: TroopType, amount: number) => void;
+  upgradeBarracks: () => void;
   investInTech: () => void;
   tick: () => void;
   openDispatch: (toId: string) => void;
@@ -295,9 +298,15 @@ export const useGameStore = create<GameState>((set, get) => ({
     const current = totalTroops(nation);
     const room = cap - current;
     if (room <= 0) return;
-    const cost = recruitCost(type, country.specializations);
+    const cost = recruitCost(
+      type,
+      country.specializations,
+      nation.unlockedTech,
+      nation.barracksLevel,
+    );
     const affordable = Math.floor(nation.gold / cost);
-    const allowed = Math.min(amount, room, affordable);
+    const bulkCap = barracksBulkCap(nation.barracksLevel);
+    const allowed = Math.min(amount, room, affordable, bulkCap);
     if (allowed <= 0) return;
     set({
       nations: {
@@ -309,6 +318,28 @@ export const useGameStore = create<GameState>((set, get) => ({
         },
       },
     });
+    playSound('click');
+  },
+
+  upgradeBarracks: () => {
+    const { playerCountryId, nations } = get();
+    if (!playerCountryId) return;
+    const nation = nations[playerCountryId];
+    if (!nation) return;
+    const cost = barracksUpgradeCost(nation.barracksLevel);
+    if (cost === null) return;
+    if (nation.gold < cost) return;
+    set({
+      nations: {
+        ...nations,
+        [playerCountryId]: {
+          ...nation,
+          gold: nation.gold - cost,
+          barracksLevel: nation.barracksLevel + 1,
+        },
+      },
+    });
+    playSound('alliance');
   },
 
   investInTech: () => {
@@ -408,7 +439,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     } else if ((s.tickCount + 1) % 10 === 0) {
       const now2 = get();
       writeSave({
-        version: 3,
+        version: 4,
         savedAt: Date.now(),
         ownership: now2.ownership,
         nations: now2.nations,
@@ -709,7 +740,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const s = get();
     if (!s.gameStarted || !s.playerCountryId) return;
     writeSave({
-      version: 3,
+      version: 4,
       savedAt: Date.now(),
       ownership: s.ownership,
       nations: s.nations,

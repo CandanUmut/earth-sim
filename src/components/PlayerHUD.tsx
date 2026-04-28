@@ -1,4 +1,13 @@
-import { Coins, Sparkles, Shield, Wind, Crosshair, BookOpen } from 'lucide-react';
+import { motion } from 'framer-motion';
+import {
+  Coins,
+  Sparkles,
+  Shield,
+  Wind,
+  Crosshair,
+  BookOpen,
+  Hammer,
+} from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
 import { countryFill, SPEC_LABELS } from '../game/world';
 import {
@@ -7,6 +16,9 @@ import {
   techInvestmentCost,
   totalTroops,
   TROOP_LABELS,
+  barracksUpgradeCost,
+  barracksBulkCap,
+  barracksQuickButtons,
   type TroopType,
 } from '../game/economy';
 
@@ -22,6 +34,8 @@ const TROOP_ICONS: Record<TroopType, React.ReactNode> = {
   artillery: <Crosshair size={12} />,
 };
 
+const tapMotion = { whileTap: { scale: 0.93 }, transition: { duration: 0.08 } };
+
 export default function PlayerHUD() {
   const playerId = useGameStore((s) => s.playerCountryId);
   const country = useGameStore((s) =>
@@ -32,12 +46,17 @@ export default function PlayerHUD() {
   );
   const recruit = useGameStore((s) => s.recruit);
   const invest = useGameStore((s) => s.investInTech);
+  const upgradeBarracks = useGameStore((s) => s.upgradeBarracks);
   const setTechPanelOpen = useGameStore((s) => s.setTechPanelOpen);
 
   if (!playerId || !country || !nation) return null;
 
   const cap = maxTroops(country);
   const total = totalTroops(nation);
+  const room = Math.max(0, cap - total);
+  const bulkCap = barracksBulkCap(nation.barracksLevel);
+  const upgradeCost = barracksUpgradeCost(nation.barracksLevel);
+  const quick = barracksQuickButtons(nation.barracksLevel);
 
   return (
     <aside
@@ -45,7 +64,7 @@ export default function PlayerHUD() {
       style={{
         top: 64,
         left: 16,
-        width: 290,
+        width: 320,
         background: 'var(--paper)',
         border: '1px solid var(--ink)',
         boxShadow: '0 4px 14px var(--paper-shadow), 0 1px 2px var(--paper-shadow)',
@@ -121,6 +140,43 @@ export default function PlayerHUD() {
         </span>
       </div>
 
+      <div className="flex items-center justify-between" style={{ padding: '4px 0 4px' }}>
+        <div className="flex items-center gap-2" style={{ color: 'var(--ink-faded)' }}>
+          <Hammer size={14} />
+          <span style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            Barracks · L{nation.barracksLevel}
+          </span>
+        </div>
+        {upgradeCost !== null ? (
+          <motion.button
+            type="button"
+            {...tapMotion}
+            disabled={nation.gold < upgradeCost}
+            onClick={upgradeBarracks}
+            title={`Upgrade barracks to L${nation.barracksLevel + 1}: bulk-cap +, costs less per unit.`}
+            style={{
+              background:
+                nation.gold >= upgradeCost ? 'var(--ink)' : 'transparent',
+              color:
+                nation.gold >= upgradeCost ? 'var(--paper)' : 'var(--ink-faded)',
+              border: '1px solid var(--ink)',
+              padding: '2px 8px',
+              fontFamily: '"JetBrains Mono", monospace',
+              fontSize: 10,
+              fontWeight: 600,
+              cursor: nation.gold >= upgradeCost ? 'pointer' : 'not-allowed',
+              opacity: nation.gold >= upgradeCost ? 1 : 0.5,
+            }}
+          >
+            Upgrade ({upgradeCost}g)
+          </motion.button>
+        ) : (
+          <span style={{ fontSize: 10, color: 'var(--ink-faded)', fontStyle: 'italic' }}>
+            max level
+          </span>
+        )}
+      </div>
+
       <div
         style={{
           fontSize: 10,
@@ -131,58 +187,109 @@ export default function PlayerHUD() {
           marginBottom: 4,
         }}
       >
-        Army · {fmtNum(total)} / {fmtNum(cap)}
+        Army · {fmtNum(total)} / {fmtNum(cap)} · batch ≤ {fmtNum(bulkCap)}
       </div>
 
       {(['infantry', 'cavalry', 'artillery'] as const).map((type) => {
-        const cost = recruitCost(type, country.specializations);
-        const canRecruit = nation.gold >= cost && total < cap;
+        const cost = recruitCost(
+          type,
+          country.specializations,
+          nation.unlockedTech,
+          nation.barracksLevel,
+        );
+        const baseDisabled = total >= cap;
+        const maxAffordable = Math.floor(nation.gold / cost);
+        const maxBuy = Math.min(room, maxAffordable, bulkCap);
+
         return (
           <div
             key={type}
-            className="flex items-center gap-2"
-            style={{ padding: '3px 0' }}
+            style={{ padding: '4px 0', borderTop: '1px dashed transparent' }}
           >
-            <div
-              style={{
-                color: canRecruit ? 'var(--ink)' : 'var(--ink-faded)',
-                width: 16,
-              }}
-            >
-              {TROOP_ICONS[type]}
-            </div>
-            <div style={{ flex: 1, fontSize: 12 }}>
-              <span style={{ fontWeight: 500 }}>{TROOP_LABELS[type]}</span>
-              <span className="num" style={{ marginLeft: 6, color: 'var(--ink-faded)' }}>
-                {fmtNum(nation[type])}
+            <div className="flex items-center gap-2" style={{ marginBottom: 3 }}>
+              <div
+                style={{
+                  color: !baseDisabled ? 'var(--ink)' : 'var(--ink-faded)',
+                  width: 16,
+                }}
+              >
+                {TROOP_ICONS[type]}
+              </div>
+              <div style={{ flex: 1, fontSize: 12 }}>
+                <span style={{ fontWeight: 500 }}>{TROOP_LABELS[type]}</span>
+                <span className="num" style={{ marginLeft: 6, color: 'var(--ink-faded)' }}>
+                  {fmtNum(nation[type])}
+                </span>
+              </div>
+              <span
+                className="num"
+                style={{ fontSize: 10, color: 'var(--ink-faded)' }}
+              >
+                {cost}g/ea
               </span>
             </div>
-            <button
-              type="button"
-              disabled={!canRecruit}
-              onClick={() => recruit(type, 5)}
-              title={`+5 ${TROOP_LABELS[type]} for ${5 * cost}g`}
-              style={{
-                background: canRecruit ? 'var(--paper)' : 'transparent',
-                color: canRecruit ? 'var(--ink)' : 'var(--ink-faded)',
-                border: `1px solid ${canRecruit ? 'var(--ink)' : 'var(--ink-faded)'}`,
-                padding: '3px 8px',
-                fontFamily: '"JetBrains Mono", monospace',
-                fontSize: 11,
-                fontWeight: 600,
-                cursor: canRecruit ? 'pointer' : 'not-allowed',
-                opacity: canRecruit ? 1 : 0.5,
-              }}
-            >
-              +5 ({cost * 5}g)
-            </button>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {quick.map((amount) => {
+                const allowed = Math.min(amount, maxBuy);
+                const can = allowed > 0 && !baseDisabled;
+                return (
+                  <motion.button
+                    key={amount}
+                    type="button"
+                    {...tapMotion}
+                    disabled={!can}
+                    onClick={() => recruit(type, amount)}
+                    title={`+${amount} for ${amount * cost}g`}
+                    style={{
+                      flex: 1,
+                      background: can ? 'var(--paper)' : 'transparent',
+                      color: can ? 'var(--ink)' : 'var(--ink-faded)',
+                      border: `1px solid ${can ? 'var(--ink)' : 'var(--ink-faded)'}`,
+                      padding: '3px 0',
+                      fontFamily: '"JetBrains Mono", monospace',
+                      fontSize: 10,
+                      fontWeight: 600,
+                      cursor: can ? 'pointer' : 'not-allowed',
+                      opacity: can ? 1 : 0.45,
+                    }}
+                  >
+                    +{amount}
+                  </motion.button>
+                );
+              })}
+              <motion.button
+                type="button"
+                {...tapMotion}
+                disabled={maxBuy <= 0}
+                onClick={() => recruit(type, maxBuy)}
+                title={`+${maxBuy} for ${maxBuy * cost}g (cap by gold/room/barracks)`}
+                style={{
+                  flex: 1.2,
+                  background:
+                    maxBuy > 0 ? 'var(--accent-gold)' : 'transparent',
+                  color:
+                    maxBuy > 0 ? 'var(--paper)' : 'var(--ink-faded)',
+                  border: `1px solid ${maxBuy > 0 ? 'var(--accent-gold)' : 'var(--ink-faded)'}`,
+                  padding: '3px 0',
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  cursor: maxBuy > 0 ? 'pointer' : 'not-allowed',
+                  opacity: maxBuy > 0 ? 1 : 0.45,
+                  letterSpacing: '0.04em',
+                }}
+              >
+                MAX {maxBuy > 0 ? `(${maxBuy})` : ''}
+              </motion.button>
+            </div>
           </div>
         );
       })}
 
-      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-        <button
+      <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+        <motion.button
           type="button"
+          {...tapMotion}
           disabled={nation.gold < techInvestmentCost()}
           onClick={invest}
           title="Invest gold for a slow, generic combat-strength bump."
@@ -200,9 +307,10 @@ export default function PlayerHUD() {
           }}
         >
           Invest +Tech ({techInvestmentCost()}g)
-        </button>
-        <button
+        </motion.button>
+        <motion.button
           type="button"
+          {...tapMotion}
           onClick={() => setTechPanelOpen(true)}
           title="Tech Tree — discrete unlocks across military / economy / logistics / diplomacy."
           style={{
@@ -219,7 +327,7 @@ export default function PlayerHUD() {
           }}
         >
           <BookOpen size={12} /> Tech
-        </button>
+        </motion.button>
       </div>
       {nation.unlockedTech.length > 0 && (
         <div

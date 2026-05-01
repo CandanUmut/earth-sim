@@ -38,11 +38,7 @@ function arrowColor(args: {
   return 'var(--ink-faded)';
 }
 
-function fmtTroops(n: number): string {
-  if (n >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return Math.round(n).toString();
-}
+import { fmtTroops } from '../util/format';
 
 function buildArrowPath(
   a: [number, number],

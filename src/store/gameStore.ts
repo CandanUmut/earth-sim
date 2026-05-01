@@ -100,13 +100,10 @@ export type BattleAnimation = {
 export type PendingDecision =
   | { kind: 'ai_declared_war'; aggressorId: string; tickCount: number };
 
-/** A cinematic card waiting to be shown to the player. */
+/** A cinematic card waiting to be shown to the player.
+ *  These PAUSE the game and demand acknowledgment.
+ *  Reserved for events that directly affect the player. */
 export type CinematicCard =
-  | {
-      kind: 'historical';
-      event: HistoricalEvent;
-      shownAt: number;
-    }
   | {
       kind: 'war_declared';
       aggressorId: string;
@@ -120,10 +117,33 @@ export type CinematicCard =
       shownAt: number;
     }
   | {
+      kind: 'rebellion_on_player_tile';
+      tileId: string;
+      shownAt: number;
+    };
+
+/** Non-blocking world news — top banner that auto-dismisses.
+ *  Used for things the player should KNOW but doesn't need to STOP for. */
+export type WorldNewsItem =
+  | {
+      id: string;
+      kind: 'historical';
+      event: HistoricalEvent;
+      addedAt: number;
+    }
+  | {
+      id: string;
       kind: 'chapter';
       year: number;
       title: string;
-      shownAt: number;
+      addedAt: number;
+    }
+  | {
+      id: string;
+      kind: 'distant_capital_fell';
+      fallenName: string;
+      conquerorName: string;
+      addedAt: number;
     };
 
 export const BATTLE_ANIM_MS = 2500;
@@ -152,8 +172,10 @@ export type GameState = {
   leaders: Record<string, Leader>;
   /** Historical events that have already fired this campaign. */
   historicalFired: Record<string, true>;
-  /** Queue of cinematic cards waiting to be acknowledged (FIFO). */
+  /** Queue of cinematic cards (PAUSES the game). Player-affecting only. */
   cinematicQueue: CinematicCard[];
+  /** Non-blocking world news ticker — auto-dismisses, doesn't pause. */
+  worldNews: WorldNewsItem[];
   /** Last in-game year a chapter title was shown. */
   lastChapterYear: number | null;
   /** Critical decision waiting for the player; while non-null, game is paused. */
@@ -217,6 +239,7 @@ export type GameState = {
   closePeaceDialog: () => void;
   acknowledgePending: () => void;
   dismissCinematic: () => void;
+  dismissNews: (id: string) => void;
   proposeAlliance: (targetId: string) => void;
   sendGift: (targetId: string, gold: number) => void;
   proposeTradeAgreement: (targetId: string) => void;
@@ -271,14 +294,28 @@ function pickChapterTitle(
   year: number,
   wars: Record<string, War>,
 ): string | null {
-  // First chapter every campaign so it always announces itself.
   const warCount = Object.keys(wars).length;
-  if (year === 1900) return 'The Old Order';
-  if (warCount >= 6) return 'The World Aflame';
-  if (warCount >= 3) return 'The Powder Keg';
-  if (warCount === 0) return 'A Long Calm';
-  // Default: every year gets *something* so the rhythm is consistent.
-  if (year % 5 === 0) return `${year} — A New Decade`;
+  // First chapter every campaign so it always announces itself.
+  if (year === 1900) return '1900 — The Old Order';
+  // World-state-conditioned titles.
+  if (warCount >= 8) return `${year} — The World Aflame`;
+  if (warCount >= 5) return `${year} — A General War`;
+  if (warCount >= 3) return `${year} — The Powder Keg`;
+  if (warCount === 0) {
+    const calmTitles = ['A Long Calm', 'A Quiet Spring', 'An Anxious Peace'];
+    return `${year} — ${calmTitles[year % calmTitles.length]}`;
+  }
+  // Decade markers.
+  if (year === 1910) return '1910 — Tensions Rise';
+  if (year === 1914) return '1914 — The Lamps Go Out';
+  if (year === 1918) return '1918 — Armistice';
+  if (year === 1920) return '1920 — A New Order';
+  if (year === 1929) return '1929 — The Reckoning';
+  if (year === 1933) return '1933 — Shadows Lengthen';
+  if (year === 1939) return '1939 — Steel and Smoke';
+  if (year === 1945) return '1945 — Year Zero';
+  if (year % 10 === 0) return `${year} — A New Decade`;
+  if (year % 5 === 0) return `${year} — Five Years On`;
   return `${year}`;
 }
 
@@ -316,6 +353,7 @@ const initialState = {
   leaders: {} as Record<string, Leader>,
   historicalFired: {} as Record<string, true>,
   cinematicQueue: [] as CinematicCard[],
+  worldNews: [] as WorldNewsItem[],
   lastChapterYear: null as number | null,
   pendingDecision: null as PendingDecision | null,
   peaceDialogWarId: null as string | null,
@@ -598,16 +636,22 @@ export const useGameStore = create<GameState>((set, get) => ({
       paused = true;
     }
 
-    // Build the cinematic queue.
+    // Two streams: cinematic (pauses, only for things that affect the player)
+    // and world news (top-banner ticker, auto-dismisses, doesn't pause).
     const newCinematics: CinematicCard[] = [];
+    const newWorldNews: WorldNewsItem[] = [];
+
+    // Historical events → news (NEVER pauses).
     if (result.historicalEvent) {
-      newCinematics.push({
+      newWorldNews.push({
+        id: `news-h-${result.historicalEvent.id}`,
         kind: 'historical',
         event: result.historicalEvent,
-        shownAt: performance.now(),
+        addedAt: now,
       });
     }
-    // Chapter card on first tick of a new in-game year (after January).
+
+    // Chapter cards → news on first tick of a new year.
     let lastChapterYear = s.lastChapterYear;
     if (
       result.date.year !== s.date.year &&
@@ -615,44 +659,76 @@ export const useGameStore = create<GameState>((set, get) => ({
     ) {
       const chapterTitle = pickChapterTitle(result.date.year, result.wars);
       if (chapterTitle) {
-        newCinematics.push({
+        newWorldNews.push({
+          id: `news-c-${result.date.year}`,
           kind: 'chapter',
           year: result.date.year,
           title: chapterTitle,
-          shownAt: performance.now(),
+          addedAt: now,
         });
         lastChapterYear = result.date.year;
       }
     }
-    // War declared on player → cinematic card too, replacing the toast feel.
+
+    // War declared on player → CINEMATIC (pauses).
     if (result.aiDeclaredWarOnPlayer.length > 0 && s.playerCountryId) {
       newCinematics.push({
         kind: 'war_declared',
         aggressorId: result.aiDeclaredWarOnPlayer[0],
         defenderId: s.playerCountryId,
-        shownAt: performance.now(),
+        shownAt: now,
       });
     }
-    // Capital fell? Detect by comparing ownership[homeId] before/after.
-    for (const [homeId] of Object.entries(s.ownership)) {
-      if (homeId !== homeId) continue; // homeId is the country's "self" tile
+
+    // Capital fell — only the player's home is cinematic. Others are news.
+    for (const homeId of Object.keys(result.ownership)) {
       const beforeOwner = s.ownership[homeId];
       const afterOwner = result.ownership[homeId];
       if (
         beforeOwner !== afterOwner &&
-        afterOwner !== homeId &&
-        beforeOwner === homeId
+        beforeOwner === homeId &&
+        afterOwner !== homeId
       ) {
-        newCinematics.push({
-          kind: 'capital_fell',
-          fallenId: homeId,
-          conquerorId: afterOwner,
-          shownAt: performance.now(),
-        });
+        if (homeId === s.homeCountryId) {
+          newCinematics.push({
+            kind: 'capital_fell',
+            fallenId: homeId,
+            conquerorId: afterOwner,
+            shownAt: now,
+          });
+        } else {
+          const fallen = s.countries[homeId];
+          const conqueror = s.countries[afterOwner];
+          if (fallen && conqueror) {
+            newWorldNews.push({
+              id: `news-cap-${homeId}-${s.tickCount}`,
+              kind: 'distant_capital_fell',
+              fallenName: fallen.name,
+              conquerorName: conqueror.name,
+              addedAt: now,
+            });
+          }
+        }
+      }
+    }
+
+    // Rebellion on a player-owned tile → cinematic (pauses).
+    for (const ev of result.newEvents) {
+      if (ev.kind === 'peasant_revolt' && s.playerCountryId) {
+        const targetOwner = result.ownership[ev.targetId];
+        if (targetOwner === s.playerCountryId) {
+          newCinematics.push({
+            kind: 'rebellion_on_player_tile',
+            tileId: ev.targetId,
+            shownAt: now,
+          });
+        }
       }
     }
 
     const cinematicQueue = [...s.cinematicQueue, ...newCinematics];
+    // World news capped at 5 latest items so the banner doesn't clog.
+    const worldNews = [...s.worldNews, ...newWorldNews].slice(-5);
     if (newCinematics.length > 0) paused = true;
 
     set({
@@ -671,6 +747,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       wars: result.wars,
       historicalFired: result.historicalFired,
       cinematicQueue,
+      worldNews,
       lastChapterYear,
       pendingDecision,
       paused,
@@ -968,6 +1045,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     const next = queue.slice(1);
     set({ cinematicQueue: next });
     if (next.length === 0) ensureTickInterval(get);
+  },
+
+  dismissNews: (id) => {
+    set({ worldNews: get().worldNews.filter((n) => n.id !== id) });
   },
 
   proposeAlliance: (targetId) => {

@@ -45,11 +45,7 @@ function formatPop(n: number): string {
   return n.toLocaleString();
 }
 
-function fmtNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
-  return Math.round(n).toLocaleString();
-}
+import { fmtTroops, fmtGold } from '../util/format';
 
 const GIFT_AMOUNT = 10;
 
@@ -264,14 +260,14 @@ export default function CountryInfoPanel() {
           )}
           {nation && (
             <>
-              <Stat label="Troops" value={fmtNum(totalTroops(nation))} mono />
+              <Stat label="Army" value={fmtTroops(totalTroops(nation))} mono />
               <Stat
                 label="↳ Composition"
-                value={`${fmtNum(nation.infantry)}i · ${fmtNum(nation.cavalry)}c · ${fmtNum(nation.artillery)}a`}
+                value={`${fmtTroops(nation.infantry)}i · ${fmtTroops(nation.cavalry)}c · ${fmtTroops(nation.artillery)}a`}
                 mono
               />
               {showGold ? (
-                <Stat label="Gold" value={fmtNum(nation.gold)} mono />
+                <Stat label="Gold" value={fmtGold(nation.gold)} mono />
               ) : (
                 <Stat label="Gold" value="—" italic />
               )}

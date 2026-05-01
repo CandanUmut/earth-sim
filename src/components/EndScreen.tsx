@@ -2,10 +2,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { MONTH_NAMES } from '../game/tick';
 import Fireworks from './Fireworks';
+import { fmtTroops } from '../util/format';
 
-function fmtNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
+function fmtCount(n: number): string {
   return Math.round(n).toLocaleString();
 }
 
@@ -110,15 +109,15 @@ export default function EndScreen() {
             >
               <Stat
                 label="Conquered"
-                value={fmtNum(conquered)}
+                value={fmtCount(conquered)}
               />
               <Stat
                 label="Battles"
-                value={fmtNum(battles.length)}
+                value={fmtCount(battles.length)}
               />
               <Stat
                 label="Largest engagement"
-                value={fmtNum(biggestBattle)}
+                value={fmtTroops(biggestBattle)}
               />
             </div>
 

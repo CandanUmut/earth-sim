@@ -43,6 +43,30 @@ export type HistoricalEvent = {
  */
 export const HISTORICAL_EVENTS: HistoricalEvent[] = [
   {
+    id: 'h-1900-paris',
+    year: 1900,
+    month: 3,
+    title: 'Exposition Universelle opens in Paris',
+    flavor:
+      'Forty-eight million visitors will pass under the new Pont Alexandre III. Electric lights, moving walkways, the Eiffel Tower painted gold — the Belle Époque on display.',
+  },
+  {
+    id: 'h-1901-victoria',
+    year: 1901,
+    month: 0,
+    title: 'Queen Victoria dies at Osborne House',
+    flavor:
+      'Sixty-three years on the throne. Half her subjects have known no other monarch. The Victorian age ends in the first month of the new century.',
+  },
+  {
+    id: 'h-1902-mckinley',
+    year: 1902,
+    month: 8,
+    title: 'Theodore Roosevelt assumes the presidency',
+    flavor:
+      'McKinley dies of his wounds in Buffalo; Roosevelt is sworn in at forty-two — the youngest American president yet. Big stick. Big plans.',
+  },
+  {
     id: 'h-1903-wright',
     year: 1903,
     month: 11,
@@ -69,12 +93,53 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     effect: { kind: 'control_drop', country: 'RUS', amount: 30 },
   },
   {
+    id: 'h-1906-sanfran',
+    year: 1906,
+    month: 3,
+    title: 'San Francisco earthquake and fire',
+    flavor:
+      'The Hayward Fault tears at five-twelve in the morning. Three days of fire reduce the city to ash. Three thousand dead.',
+  },
+  {
+    id: 'h-1907-hague',
+    year: 1907,
+    month: 5,
+    title: 'Second Hague Convention concludes',
+    flavor:
+      'Forty-four nations debate the laws of war. The conventions are ratified. They will be tested within seven years.',
+  },
+  {
     id: 'h-1908-tunguska',
     year: 1908,
     month: 5,
     title: 'A fireball over Tunguska',
     flavor:
       'Something — a comet, a meteor, no one is sure — flattens 2,000 square kilometres of Siberian forest. The shockwave is felt across continents.',
+  },
+  {
+    id: 'h-1909-peary',
+    year: 1909,
+    month: 3,
+    title: 'Peary claims the North Pole',
+    flavor:
+      'After twenty-three years of attempts, the American admiral plants the flag on the Arctic ice — or close enough that history accepts it.',
+  },
+  {
+    id: 'h-1910-mexicanrev',
+    year: 1910,
+    month: 10,
+    title: 'Mexican Revolution begins',
+    flavor:
+      'Madero issues the Plan de San Luis. Pancho Villa and Zapata take the field. Díaz will fall within months; the fighting will last a decade.',
+    effect: { kind: 'control_drop', country: 'MEX', amount: 30 },
+  },
+  {
+    id: 'h-1911-amundsen',
+    year: 1911,
+    month: 11,
+    title: 'Amundsen reaches the South Pole',
+    flavor:
+      'Five Norwegians on skis arrive at 90° south on the fourteenth of December. Scott will reach the same spot a month later — and not return.',
   },
   {
     id: 'h-1912-titanic',
@@ -101,12 +166,28 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
       'Within five weeks of the assassination, Europe sleepwalks into the largest war it has ever known. Generations are conscripted; a continent puts on uniform.',
   },
   {
+    id: 'h-1915-lusitania',
+    year: 1915,
+    month: 4,
+    title: 'RMS Lusitania torpedoed off Ireland',
+    flavor:
+      'A single torpedo from U-20. Eleven hundred dead, including 128 Americans. Public opinion in the United States begins to harden.',
+  },
+  {
     id: 'h-1916-verdun',
     year: 1916,
     month: 1,
     title: 'The mill of Verdun',
     flavor:
       'Three hundred thousand men will die over a few square kilometres of French earth. They bleed France white — and Germany also.',
+  },
+  {
+    id: 'h-1916-somme',
+    year: 1916,
+    month: 6,
+    title: 'The first day on the Somme',
+    flavor:
+      'Twenty thousand British dead before lunch. The bloodiest single day in the British Army’s history. The advance gains a hundred yards.',
   },
   {
     id: 'h-1917-russianrev',
@@ -135,12 +216,36 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     effect: { kind: 'pop_penalty_world', amount: 0.04 },
   },
   {
+    id: 'h-1919-versailles',
+    year: 1919,
+    month: 5,
+    title: 'Treaty of Versailles signed',
+    flavor:
+      'In the Hall of Mirrors, where Germany was unified in 1871, Germany is broken in 1919. Reparations, lost colonies, blame. The seeds of the next war.',
+  },
+  {
+    id: 'h-1920-leagueofnations',
+    year: 1920,
+    month: 0,
+    title: 'League of Nations holds its first session',
+    flavor:
+      'Forty-two nations meet in Geneva. The United States, whose president imagined the body, refuses to join. The auguries are mixed.',
+  },
+  {
     id: 'h-1922-soviet',
     year: 1922,
     month: 11,
     title: 'Union of Soviet Socialist Republics declared',
     flavor:
       'Four republics formally bind themselves into a single state. The hammer and sickle is raised over the Kremlin.',
+  },
+  {
+    id: 'h-1922-mussolini',
+    year: 1922,
+    month: 9,
+    title: 'Mussolini marches on Rome',
+    flavor:
+      'Twenty-six thousand blackshirts converge on the capital. The king does not call out the army. Italy has its first fascist government.',
   },
   {
     id: 'h-1923-kanto',
@@ -161,12 +266,45 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     effect: { kind: 'gold_penalty_world', amount: 0.18 },
   },
   {
+    id: 'h-1927-lindbergh',
+    year: 1927,
+    month: 4,
+    title: 'Lindbergh crosses the Atlantic alone',
+    flavor:
+      'Thirty-three and a half hours from Long Island to Le Bourget in the Spirit of St. Louis. A quarter million people meet him in Paris.',
+  },
+  {
+    id: 'h-1932-empirestate',
+    year: 1931,
+    month: 4,
+    title: 'Empire State Building opens',
+    flavor:
+      'A skyscraper in twenty months — through a deepening Depression. New York reaches twelve hundred and fifty feet into the sky.',
+  },
+  {
     id: 'h-1933-hitler',
     year: 1933,
     month: 0,
     title: 'Hitler appointed Chancellor of Germany',
     flavor:
       'The Reichstag burns. Emergency decrees follow. The Weimar Republic, never quite alive, formally dies.',
+  },
+  {
+    id: 'h-1933-newdeal',
+    year: 1933,
+    month: 2,
+    title: 'Roosevelt opens the New Deal',
+    flavor:
+      '"The only thing we have to fear is fear itself." A bank holiday is declared. The first hundred days reshape the American state.',
+    effect: { kind: 'gold_bonus', country: 'USA', amount: 200 },
+  },
+  {
+    id: 'h-1935-italy',
+    year: 1935,
+    month: 9,
+    title: 'Italy invades Ethiopia',
+    flavor:
+      'Mussolini’s legions cross from Eritrea. Mustard gas, modern aircraft against tribal levies. The League of Nations protests. Nothing more.',
   },
   {
     id: 'h-1936-spanishcw',
@@ -194,6 +332,14 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
       'At dawn on the first of September, the Wehrmacht crosses the border. Britain and France declare war within forty-eight hours. The world inhales.',
   },
   {
+    id: 'h-1940-dunkirk',
+    year: 1940,
+    month: 4,
+    title: 'The Dunkirk evacuation',
+    flavor:
+      '338,000 British and French troops lifted from the beaches by warships, fishing boats, weekend yachts. A defeat that becomes a legend.',
+  },
+  {
     id: 'h-1940-blitz',
     year: 1940,
     month: 8,
@@ -216,6 +362,14 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     title: 'The siege of Stalingrad begins',
     flavor:
       'Two armies grind each other to dust along the Volga. Snipers, ruins, starvation — an entire campaign measured in city blocks.',
+  },
+  {
+    id: 'h-1943-stalingradend',
+    year: 1943,
+    month: 1,
+    title: 'Stalingrad — German Sixth Army surrenders',
+    flavor:
+      'Ninety-one thousand Germans walk into Soviet captivity. The high-water mark of the Reich. From here, every map shrinks westward.',
   },
   {
     id: 'h-1944-dday',

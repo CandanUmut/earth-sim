@@ -12,11 +12,7 @@ import {
 import { combatTechMultiplier } from '../game/techTree';
 import { TERRAIN_BONUS } from '../game/combat';
 
-function fmtNum(n: number): string {
-  if (n >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return Math.round(n).toString();
-}
+import { fmtTroops, fmtPop } from '../util/format';
 
 export default function SendTroopsModal() {
   const targetId = useGameStore((s) => s.dispatchTargetId);
@@ -217,8 +213,8 @@ export default function SendTroopsModal() {
               marginBottom: 14,
             }}
           >
-            Defenders: {fmtNum(defenderTotal)} ·{' '}
-            {target.terrain} · {fmtNum(target.population)} pop
+            Defenders: {fmtTroops(defenderTotal)} ·{' '}
+            {target.terrain} · {fmtPop(target.population)} pop
           </div>
 
           {!reachable ? (
@@ -293,7 +289,7 @@ export default function SendTroopsModal() {
                   textAlign: 'right',
                 }}
               >
-                Total: {fmtNum(totalSend)}
+                Total: {fmtTroops(totalSend)}
               </div>
 
               {preview && (

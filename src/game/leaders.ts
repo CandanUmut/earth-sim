@@ -80,6 +80,8 @@ const NAME_POOLS: Record<
     firsts: [
       'Henri', 'Édouard', 'Léon', 'Maximilian', 'Friedrich', 'Wilhelm',
       'Albert', 'Charles', 'Édgar', 'Pierre', 'Otto', 'Karl',
+      'Frédéric', 'Hubert', 'Auguste', 'Léopold', 'Bernhard', 'Konrad',
+      'Étienne', 'Émile', 'Paul', 'Heinrich', 'Marcel', 'Lothar',
     ],
     numerals: true,
     titles: ['King', 'Emperor', 'Chancellor', 'President', 'Prime Minister'],
@@ -88,6 +90,8 @@ const NAME_POOLS: Record<
     firsts: [
       'Mikhail', 'Aleksei', 'Nikolai', 'Boris', 'Vasili', 'Stefan',
       'Dimitri', 'Lazar', 'Józef', 'Tomáš', 'Imre',
+      'Pyotr', 'Ivan', 'Vladislav', 'Aleksandr', 'Bogdan', 'Radomir',
+      'Kazimierz', 'Miloš', 'Sándor', 'Yaroslav', 'Andrei',
     ],
     numerals: true,
     titles: ['Czar', 'King', 'Premier', 'Chairman', 'Marshal'],
@@ -95,7 +99,8 @@ const NAME_POOLS: Record<
   northernEurope: {
     firsts: [
       'Olaf', 'Gustav', 'Sigurd', 'Erik', 'Magnus', 'Knud', 'Harald',
-      'Birger', 'Carl',
+      'Birger', 'Carl', 'Haakon', 'Frederik', 'Vilhelm', 'Christian',
+      'Sten', 'Aleksander', 'Bjørn',
     ],
     numerals: true,
     titles: ['King', 'Prime Minister', 'Chancellor'],
@@ -103,7 +108,9 @@ const NAME_POOLS: Record<
   mediterranean: {
     firsts: [
       'Vittorio', 'Umberto', 'Alfonso', 'João', 'Francisco', 'Manuel',
-      'Constantine', 'Georgios', 'Pedro',
+      'Constantine', 'Georgios', 'Pedro', 'Lorenzo', 'Eleftherios',
+      'Salvador', 'Filipe', 'Niccolò', 'Andreas', 'Cosimo', 'Diogo',
+      'Esteban', 'Ioannis', 'Carlo',
     ],
     numerals: true,
     titles: ['King', 'Emperor', 'Caudillo', 'President', 'Prime Minister'],
@@ -111,7 +118,8 @@ const NAME_POOLS: Record<
   middleEast: {
     firsts: [
       'Mehmed', 'Abdulhamid', 'Ahmad', 'Faisal', 'Reza', 'Ibn Saud',
-      'Hussein', 'Suleiman', 'Mahmud',
+      'Hussein', 'Suleiman', 'Mahmud', 'Selim', 'Murad', 'Bayezid',
+      'Ismail', 'Khaled', 'Tariq', 'Nasir', 'Yusuf', 'Karim',
     ],
     numerals: true,
     titles: ['Sultan', 'Shah', 'King', 'Emir'],
@@ -119,7 +127,8 @@ const NAME_POOLS: Record<
   southAsia: {
     firsts: [
       'Vikram', 'Ashoka', 'Rajendra', 'Jagdish', 'Pratap', 'Ranjit',
-      'Bahadur',
+      'Bahadur', 'Surendra', 'Mahadev', 'Indrajit', 'Aditya', 'Bhupendra',
+      'Mohan', 'Tej', 'Hari',
     ],
     numerals: true,
     titles: ['Maharaja', 'King', 'Premier'],
@@ -127,7 +136,8 @@ const NAME_POOLS: Record<
   eastAsia: {
     firsts: [
       'Yongjian', 'Hideki', 'Mutsuhito', 'Kuanghsu', 'Liang Wei',
-      'Zhao Heng', 'Akihito',
+      'Zhao Heng', 'Akihito', 'Taishō', 'Yoshihito', 'Pu Yi', 'Sun Wen',
+      'Chiang', 'Mao', 'Naruhito', 'Li Yuan', 'Zhou Mei',
     ],
     numerals: false,
     titles: ['Emperor', 'Chairman', 'Premier', 'Marshal'],
@@ -135,7 +145,8 @@ const NAME_POOLS: Record<
   southeastAsia: {
     firsts: [
       'Suriyawong', 'Mongkut', 'Chulalongkorn', 'Bao Dai', 'Sukarno',
-      'Quezon', 'Ne Win',
+      'Quezon', 'Ne Win', 'Norodom', 'Sihanouk', 'Phibun', 'Ramkhamhaeng',
+      'Aguinaldo', 'Diponegoro',
     ],
     numerals: false,
     titles: ['King', 'Sultan', 'President', 'General'],
@@ -143,7 +154,8 @@ const NAME_POOLS: Record<
   subSaharanAfrica: {
     firsts: [
       'Menelik', 'Yohannes', 'Shaka', 'Lobengula', 'Tewodros', 'Mansa',
-      'Asantewaa', 'Behanzin', 'Samori',
+      'Asantewaa', 'Behanzin', 'Samori', 'Cetshwayo', 'Kabarega',
+      'Khama', 'Mzilikazi', 'Sobhuza', 'Moshoeshoe', 'Lekhanya', 'Iyasu',
     ],
     numerals: true,
     titles: ['King', 'Emperor', 'Queen', 'Chairman', 'General'],
@@ -151,6 +163,7 @@ const NAME_POOLS: Record<
   northAfrica: {
     firsts: [
       'Idris', 'Abdelaziz', 'Mohammed', 'Hassan', 'Farouk', 'Bourguiba',
+      'Abbas', 'Fuad', 'Tewfik', 'Ahmad Bey', 'Lyautey',
     ],
     numerals: true,
     titles: ['King', 'Sultan', 'President'],
@@ -158,7 +171,8 @@ const NAME_POOLS: Record<
   northAmerica: {
     firsts: [
       'Theodore', 'Woodrow', 'Calvin', 'Franklin', 'Harry', 'James',
-      'Wilfrid', 'Mackenzie',
+      'Wilfrid', 'Mackenzie', 'Warren', 'Herbert', 'Dwight', 'Lyndon',
+      'Lester', 'Pierre',
     ],
     numerals: false,
     titles: ['President', 'Prime Minister'],
@@ -166,14 +180,16 @@ const NAME_POOLS: Record<
   latinAmerica: {
     firsts: [
       'Porfirio', 'Emiliano', 'Lázaro', 'Getúlio', 'Juan', 'Hipólito',
-      'Augusto', 'Rafael', 'Eloy',
+      'Augusto', 'Rafael', 'Eloy', 'Plutarco', 'Sebastián', 'Joaquín',
+      'Anastasio', 'Tiburcio', 'Lázaro', 'Tomás', 'Alfredo', 'Gabriel',
     ],
     numerals: false,
     titles: ['President', 'Caudillo', 'General', 'Marshal'],
   },
   oceania: {
     firsts: [
-      'Edmund', 'Joseph', 'Andrew', 'William', 'Robert',
+      'Edmund', 'Joseph', 'Andrew', 'William', 'Robert', 'Alfred',
+      'Stanley', 'Michael', 'Earle', 'Billy',
     ],
     numerals: false,
     titles: ['Prime Minister', 'Premier'],

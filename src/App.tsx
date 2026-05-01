@@ -17,6 +17,7 @@ import DeclareWarModal from './components/DeclareWarModal';
 import PeaceModal from './components/PeaceModal';
 import PendingDecisionToast from './components/PendingDecisionToast';
 import CinematicCard from './components/CinematicCard';
+import WorldNewsBanner from './components/WorldNewsBanner';
 import { useGameStore } from './store/gameStore';
 import {
   setMusicMode,
@@ -101,6 +102,7 @@ export default function App() {
       <PeaceModal />
       <PendingDecisionToast />
       <CinematicCard />
+      <WorldNewsBanner />
       <StartScreen />
       <Tutorial />
       <EndScreen />

@@ -2,11 +2,7 @@ import { ScrollText, ChevronDown, ChevronUp } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
 import type { BattleLogEntry } from '../game/tick';
 
-function fmtNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
-  return Math.round(n).toLocaleString();
-}
+import { fmtTroops as fmtNum } from '../util/format';
 
 /** Translate a battle into one line of military prose. The numbers below give
  *  the precision; this gives the *feeling*. */

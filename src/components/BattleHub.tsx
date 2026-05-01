@@ -4,12 +4,7 @@ import { useGameStore } from '../store/gameStore';
 import { totalUnits, BALANCE_BATTLE } from '../game/activeBattle';
 import { BALANCE_CONTROL } from '../game/balance';
 
-function fmt(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return Math.round(n).toString();
-}
+import { fmtTroops as fmt } from '../util/format';
 
 export default function BattleHub() {
   const focusedId = useGameStore((s) => s.focusedBattleLocationId);

@@ -25,11 +25,7 @@ import { BALANCE_BARRACKS } from '../game/balance';
 
 const BARRACKS_COST_MUL = BALANCE_BARRACKS.costMultiplier;
 
-function fmtNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
-  return Math.round(n).toLocaleString();
-}
+import { fmtTroops, fmtGold } from '../util/format';
 
 const TROOP_ICONS: Record<TroopType, React.ReactNode> = {
   infantry: <Shield size={12} />,
@@ -127,7 +123,7 @@ export default function PlayerHUD() {
           </span>
         </div>
         <span className="num" style={{ fontSize: 14 }}>
-          {fmtNum(nation.gold)}
+          {fmtGold(nation.gold)}
         </span>
       </div>
 
@@ -194,7 +190,7 @@ export default function PlayerHUD() {
           marginBottom: 4,
         }}
       >
-        Army · {fmtNum(total)} / {fmtNum(cap)} · batch ≤ {fmtNum(bulkCap)}
+        Army · {fmtTroops(total)} / {fmtTroops(cap)} · batch ≤ {bulkCap}
       </div>
 
       {(['infantry', 'cavalry', 'artillery'] as const).map((type) => {
@@ -225,7 +221,7 @@ export default function PlayerHUD() {
               <div style={{ flex: 1, fontSize: 12 }}>
                 <span style={{ fontWeight: 500 }}>{TROOP_LABELS[type]}</span>
                 <span className="num" style={{ marginLeft: 6, color: 'var(--ink-faded)' }}>
-                  {fmtNum(nation[type])}
+                  {fmtTroops(nation[type])}
                 </span>
               </div>
               <span

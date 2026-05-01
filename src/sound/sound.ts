@@ -105,6 +105,29 @@ function getCtx(): AudioContext | null {
         .webkitAudioContext;
     if (!Ctor) return null;
     ctx = new Ctor();
+    // Browsers auto-suspend AudioContexts when tabs lose focus or are idle.
+    // Without these listeners music would die silently after a tab switch.
+    const wakeup = () => {
+      if (!ctx) return;
+      if (ctx.state === 'suspended') void ctx.resume();
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') wakeup();
+    });
+    window.addEventListener('focus', wakeup);
+    window.addEventListener('pointerdown', wakeup);
+    window.addEventListener('keydown', wakeup);
+    // Periodic watchdog: if we're meant to be playing music and either the
+    // context is suspended or the active source has silently stopped, kick it
+    // back on.
+    setInterval(() => {
+      if (!ctx) return;
+      if (ctx.state === 'suspended') void ctx.resume();
+      if (pendingMode && !activeMusic) {
+        // Lost the source somehow — try to bring music back.
+        void setMusicMode(pendingMode);
+      }
+    }, 4000);
   }
   return ctx;
 }
@@ -476,6 +499,8 @@ async function loadMusic(
 const FADE_MS = 1200;
 
 function fadeOutAndStop(state: MusicState, c: AudioContext): void {
+  // Drop the auto-restart fallback before we intentionally stop.
+  state.source.onended = null;
   const now = c.currentTime;
   const g = state.gain.gain;
   const cur = g.value;
@@ -499,6 +524,10 @@ function startMusicBuffer(
   const source = c.createBufferSource();
   source.buffer = buffer;
   source.loop = true;
+  // Explicit loop window so the entire buffer loops, even when a track has
+  // sample-rate quirks that cause loop=true to stop early.
+  source.loopStart = 0;
+  source.loopEnd = buffer.duration;
   const gain = c.createGain();
   gain.gain.value = 0.0001;
   source.connect(gain).connect(c.destination);
@@ -506,7 +535,18 @@ function startMusicBuffer(
   const target = effectiveMusicGain();
   const now = c.currentTime;
   gain.gain.linearRampToValueAtTime(target, now + FADE_MS / 1000);
-  return { mode, buffer, source, gain };
+  const state: MusicState = { mode, buffer, source, gain };
+  // Defensive fallback: if the source ever ends (browser quirk, suspension,
+  // device sleep) and we're still meant to be playing this mode, spin up a
+  // fresh source so the music keeps going.
+  source.onended = () => {
+    if (activeMusic !== state) return; // we already swapped/stopped
+    if (pendingMode !== mode) return;
+    const ctxNow = getCtx();
+    if (!ctxNow) return;
+    activeMusic = startMusicBuffer(ctxNow, mode, buffer);
+  };
+  return state;
 }
 
 export async function setMusicMode(mode: MusicMode): Promise<void> {

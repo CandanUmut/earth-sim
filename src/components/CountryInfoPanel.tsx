@@ -16,6 +16,7 @@ import type { Country, Terrain } from '../game/world';
 import { SPEC_LABELS, SPEC_DESCRIPTIONS } from '../game/world';
 import { totalTroops, type Nation, type Stance } from '../game/economy';
 import { BALANCE_POLITICS } from '../game/balance';
+import { warKey as warKeyForPair } from '../game/wars';
 
 const terrainLabels: Record<Terrain, string> = {
   plains: 'Plains',
@@ -82,8 +83,9 @@ export default function CountryInfoPanel() {
   );
   const gameStarted = useGameStore((s) => s.gameStarted);
   const setSelected = useGameStore((s) => s.setSelected);
-  const declareWar = useGameStore((s) => s.declareWar);
-  const proposePeace = useGameStore((s) => s.proposePeace);
+  const openDeclareWar = useGameStore((s) => s.openDeclareWar);
+  const openPeaceDialog = useGameStore((s) => s.openPeaceDialog);
+  const wars = useGameStore((s) => s.wars);
   const proposeAlliance = useGameStore((s) => s.proposeAlliance);
   const sendGift = useGameStore((s) => s.sendGift);
   const openDispatch = useGameStore((s) => s.openDispatch);
@@ -320,8 +322,15 @@ export default function CountryInfoPanel() {
               targetNation={ownerNation}
               targetCountry={country}
               targetControl={control}
-              onWar={() => declareWar(ownerId)}
-              onPeace={() => proposePeace(ownerId)}
+              onWar={() => openDeclareWar(ownerId)}
+              onPeace={() => {
+                if (playerId && ownerId) {
+                  const k = warKeyForPair(playerId, ownerId);
+                  const w = wars[k];
+                  if (w) openPeaceDialog(w.id);
+                  else openPeaceDialog(`legacy:${ownerId}`);
+                }
+              }}
               onAlliance={() => proposeAlliance(ownerId)}
               onGift={() => sendGift(ownerId, GIFT_AMOUNT)}
               onDispatch={() => openDispatch(selectedId)}

@@ -84,6 +84,32 @@ export const BALANCE_VICTORY = {
   populationShareToWin: 0.6,
 } as const;
 
+export const BALANCE_WARS = {
+  /** How much exhaustion each goal type "costs" the loser to accept. */
+  goalWeights: {
+    annex_tile: 25,
+    vassalize: 60,
+    tribute: 15,
+  },
+  /** Tribute per tick is `defender.baseEconomy * tributeFromWarFraction`. */
+  tributeFromWarFraction: 0.22,
+  /** Each lost battle bumps the loser's exhaustion by this much. */
+  exhaustionPerBattleLost: 4,
+  /** Additional exhaustion if the battle flipped a tile. */
+  exhaustionPerTileLost: 10,
+  /** Both sides accumulate this much exhaustion per `exhaustionTickInterval`. */
+  exhaustionPerTimeTick: 1,
+  exhaustionTickInterval: 6,
+  /** White peace threshold — any peace requires at least this. */
+  whitePeaceMinExhaustion: 15,
+  /** Tiers: max claims allowed at this strength ratio attacker:defender. */
+  maxClaimsByStrengthRatio: [
+    { ratio: 0, max: 1 },
+    { ratio: 1.5, max: 2 },
+    { ratio: 2.5, max: 3 },
+  ],
+} as const;
+
 export const BALANCE_POLITICS = {
   /** Gold income bonus per active trade partner, as a multiplier. */
   tradePartnerGoldMul: 1.06,

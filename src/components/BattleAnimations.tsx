@@ -3,6 +3,24 @@ import type { GeoProjection } from 'd3';
 import { useGameStore, BATTLE_ANIM_MS } from '../store/gameStore';
 import { countryFill } from '../game/world';
 import { totalUnits } from '../game/activeBattle';
+import { useSprite } from '../util/spriteCache';
+import type { Composition, TroopType } from '../game/economy';
+
+function dominantType(c: Composition): TroopType {
+  if (c.artillery >= c.infantry && c.artillery >= c.cavalry) return 'artillery';
+  if (c.cavalry >= c.infantry) return 'cavalry';
+  return 'infantry';
+}
+
+function totalComp(c: Composition): number {
+  return c.infantry + c.cavalry + c.artillery;
+}
+
+function fmtSmall(n: number): string {
+  if (n >= 10_000) return `${(n / 1_000).toFixed(0)}K`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return Math.round(n).toString();
+}
 
 type Props = { projection: GeoProjection };
 
@@ -35,6 +53,16 @@ export default function BattleAnimations({ projection }: Props) {
   const ownership = useGameStore((s) => s.ownership);
   const openBattleHub = useGameStore((s) => s.openBattleHub);
   const playerId = useGameStore((s) => s.playerCountryId);
+  const smokeSprite = useSprite('marker_smoke.png');
+  const infantrySprite = useSprite('marker_infantry.png');
+  const cavalrySprite = useSprite('marker_cavalry.png');
+  const artillerySprite = useSprite('marker_artillery.png');
+  const spriteFor = (t: TroopType): string | null =>
+    t === 'infantry'
+      ? infantrySprite
+      : t === 'cavalry'
+        ? cavalrySprite
+        : artillerySprite;
   const [now, setNow] = useState(() => performance.now());
 
   const hasActive = Object.keys(activeBattles).length > 0;
@@ -102,28 +130,46 @@ export default function BattleAnimations({ projection }: Props) {
           const CY = p[1];
 
           const elements: JSX.Element[] = [];
-          // Smoke cloud (low-opacity ellipse pulsing).
+          // Smoke cloud — sprite when present, animated ellipses otherwise.
           const smokeR = 11 + Math.sin(now / 600) * 1.6;
+          if (smokeSprite) {
+            const sw = smokeR * 2;
+            const sh = smokeR * 1.6;
+            elements.push(
+              <image
+                key="smoke"
+                href={smokeSprite}
+                x={p[0] - sw / 2}
+                y={p[1] - sh / 2 - 2}
+                width={sw}
+                height={sh}
+                opacity={0.55}
+                preserveAspectRatio="xMidYMid meet"
+              />,
+            );
+          } else {
+            elements.push(
+              <ellipse
+                key="smoke"
+                cx={p[0]}
+                cy={p[1]}
+                rx={smokeR}
+                ry={smokeR * 0.55}
+                fill="rgba(80,72,62,0.24)"
+                vectorEffect="non-scaling-stroke"
+              />,
+              <ellipse
+                key="smoke2"
+                cx={p[0]}
+                cy={p[1] - 1}
+                rx={smokeR * 0.65}
+                ry={smokeR * 0.32}
+                fill="rgba(40,34,26,0.28)"
+                vectorEffect="non-scaling-stroke"
+              />,
+            );
+          }
           elements.push(
-            <ellipse
-              key="smoke"
-              cx={p[0]}
-              cy={p[1]}
-              rx={smokeR}
-              ry={smokeR * 0.55}
-              fill="rgba(80,72,62,0.24)"
-              vectorEffect="non-scaling-stroke"
-            />,
-            // Inner darker smoke
-            <ellipse
-              key="smoke2"
-              cx={p[0]}
-              cy={p[1] - 1}
-              rx={smokeR * 0.65}
-              ry={smokeR * 0.32}
-              fill="rgba(40,34,26,0.28)"
-              vectorEffect="non-scaling-stroke"
-            />,
             // Two faction flags so you can read the front lines at a glance.
             <g key="flag-atk" transform={`translate(${p[0] - 11} ${p[1] - 2})`}>
               <line
@@ -167,41 +213,118 @@ export default function BattleAnimations({ projection }: Props) {
             }
           }
 
-          for (let i = 0; i < ATTACKER_DOTS_MAX; i++) {
-            const live = i < atkDots;
-            const cx = ATK_CX + (rand(battle.id, i) - 0.5) * 8;
-            const cy = CY + (rand(battle.id, i + 99) - 0.5) * 6;
+          // Compute the dominant troop type per side for sprite rendering.
+          const atkType = dominantType(battle.attackerForce);
+          const defenderComposition: Composition =
+            defenderNation && defenderOwnerId === battle.locationCountryId
+              ? {
+                  infantry: defenderNation.infantry,
+                  cavalry: defenderNation.cavalry,
+                  artillery: defenderNation.artillery,
+                }
+              : { infantry: 1, cavalry: 0, artillery: 0 };
+          const defType = dominantType(defenderComposition);
+          const atkSprite = spriteFor(atkType);
+          const defSprite = spriteFor(defType);
+
+          if (atkSprite && atkDots > 0) {
+            const size = 7;
             elements.push(
-              <circle
-                key={`a-${i}`}
-                cx={cx}
-                cy={cy}
-                r={live ? 1.1 : 0.6}
+              <image
+                key="a-sprite"
+                href={atkSprite}
+                x={ATK_CX - size / 2}
+                y={CY - size / 2}
+                width={size}
+                height={size}
+                preserveAspectRatio="xMidYMid meet"
+                opacity={0.95}
+              />,
+              <text
+                key="a-count"
+                x={ATK_CX}
+                y={CY + 6.4}
+                textAnchor="middle"
+                fontFamily='"JetBrains Mono", monospace'
+                fontWeight={700}
+                fontSize={2.6}
                 fill={attackerColor}
-                stroke={live ? 'var(--ink)' : 'none'}
-                strokeWidth={0.15}
-                opacity={live ? 1 : 0.18}
-                vectorEffect="non-scaling-stroke"
-              />,
+                stroke="var(--paper)"
+                strokeWidth={0.5}
+                paintOrder="stroke"
+              >
+                {fmtSmall(totalComp(battle.attackerForce))}
+              </text>,
             );
+          } else {
+            for (let i = 0; i < ATTACKER_DOTS_MAX; i++) {
+              const live = i < atkDots;
+              const cx = ATK_CX + (rand(battle.id, i) - 0.5) * 8;
+              const cy = CY + (rand(battle.id, i + 99) - 0.5) * 6;
+              elements.push(
+                <circle
+                  key={`a-${i}`}
+                  cx={cx}
+                  cy={cy}
+                  r={live ? 1.1 : 0.6}
+                  fill={attackerColor}
+                  stroke={live ? 'var(--ink)' : 'none'}
+                  strokeWidth={0.15}
+                  opacity={live ? 1 : 0.18}
+                  vectorEffect="non-scaling-stroke"
+                />,
+              );
+            }
           }
-          for (let i = 0; i < DEFENDER_DOTS_MAX; i++) {
-            const live = i < defDots;
-            const cx = DEF_CX + (rand(battle.id, i + 200) - 0.5) * 8;
-            const cy = CY + (rand(battle.id, i + 300) - 0.5) * 6;
+
+          if (defSprite && defDots > 0) {
+            const size = 7;
             elements.push(
-              <circle
-                key={`d-${i}`}
-                cx={cx}
-                cy={cy}
-                r={live ? 1.1 : 0.6}
-                fill={defenderColor}
-                stroke={live ? 'var(--ink)' : 'none'}
-                strokeWidth={0.15}
-                opacity={live ? 1 : 0.18}
-                vectorEffect="non-scaling-stroke"
+              <image
+                key="d-sprite"
+                href={defSprite}
+                x={DEF_CX - size / 2}
+                y={CY - size / 2}
+                width={size}
+                height={size}
+                preserveAspectRatio="xMidYMid meet"
+                opacity={0.95}
               />,
+              <text
+                key="d-count"
+                x={DEF_CX}
+                y={CY + 6.4}
+                textAnchor="middle"
+                fontFamily='"JetBrains Mono", monospace'
+                fontWeight={700}
+                fontSize={2.6}
+                fill={defenderColor}
+                stroke="var(--paper)"
+                strokeWidth={0.5}
+                paintOrder="stroke"
+              >
+                {fmtSmall(totalComp(defenderComposition))}
+              </text>,
             );
+          } else {
+            for (let i = 0; i < DEFENDER_DOTS_MAX; i++) {
+              const live = i < defDots;
+              const cx = DEF_CX + (rand(battle.id, i + 200) - 0.5) * 8;
+              const cy = CY + (rand(battle.id, i + 300) - 0.5) * 6;
+              elements.push(
+                <circle
+                  key={`d-${i}`}
+                  cx={cx}
+                  cy={cy}
+                  r={live ? 1.1 : 0.6}
+                  fill={defenderColor}
+                  stroke={live ? 'var(--ink)' : 'none'}
+                  strokeWidth={0.15}
+                  opacity={live ? 1 : 0.18}
+                  vectorEffect="non-scaling-stroke"
+                />,
+              );
+            }
           }
           // Two pairs of bullet streaks always animating (one each way).
           for (let i = 0; i < 4; i++) {

@@ -13,6 +13,9 @@ import EventToast from './components/EventToast';
 import EndScreen from './components/EndScreen';
 import Tutorial from './components/Tutorial';
 import TechTreePanel from './components/TechTreePanel';
+import DeclareWarModal from './components/DeclareWarModal';
+import PeaceModal from './components/PeaceModal';
+import PendingDecisionToast from './components/PendingDecisionToast';
 import { useGameStore } from './store/gameStore';
 import {
   setMusicMode,
@@ -93,6 +96,9 @@ export default function App() {
       <SendTroopsModal />
       <BattleHub />
       <TechTreePanel />
+      <DeclareWarModal />
+      <PeaceModal />
+      <PendingDecisionToast />
       <StartScreen />
       <Tutorial />
       <EndScreen />

@@ -105,36 +105,7 @@ export default function WorldMap() {
     sel.call(zoom);
     zoomRef.current = zoom;
 
-    const onWheel = (e: WheelEvent) => {
-      // Honor wheel without any modifier (plain scroll) — browsers send
-      // ctrlKey=true on touchpad pinch so we accept either case.
-      e.preventDefault();
-      e.stopPropagation();
-      const t = d3.zoomTransform(svgEl);
-      // ctrlKey wheel events on touchpads tend to have larger deltas; clamp.
-      const rawDelta = e.deltaY;
-      const direction = rawDelta < 0 ? 1 : -1;
-      // Smaller step on touchpad (deltaY tends to be 1–10) vs mouse wheel
-      // (deltaY 100+).
-      const stepBase = Math.abs(rawDelta) > 30 ? 1.2 : 1.08;
-      const factor = Math.pow(stepBase, direction);
-      const newK = Math.max(0.6, Math.min(12, t.k * factor));
-      if (newK === t.k) return;
-      const rect = svgEl.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      const newTx = mx - ((mx - t.x) * newK) / t.k;
-      const newTy = my - ((my - t.y) * newK) / t.k;
-      sel.call(
-        zoom.transform,
-        d3.zoomIdentity.translate(newTx, newTy).scale(newK),
-      );
-    };
-    // capture:true so we beat any other wheel listeners up the tree, and
-    // touchAction:none so browsers don't try to pan the page on touchpads.
-    svgEl.addEventListener('wheel', onWheel, { passive: false, capture: true });
     svgEl.style.touchAction = 'none';
-
     svgEl.style.cursor = 'grab';
     sel.on('mousedown.cursor', () => {
       svgEl.style.cursor = 'grabbing';
@@ -146,9 +117,76 @@ export default function WorldMap() {
       sel.on('.zoom', null);
       sel.on('mousedown.cursor', null);
       sel.on('mouseup.cursor', null);
-      svgEl.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
     };
   }, [w, h]);
+
+  // Wheel zoom — attached separately on document/window with capture so:
+  //  1. We can preventDefault (browsers force passive listeners on root unless
+  //     {passive:false} is explicit).
+  //  2. The handler runs whether the wheel target is the map, a modal card,
+  //     a tooltip, or the dark gradient overlay.
+  //  3. The handler attaches once on mount, independent of map/SVG layout.
+  useEffect(() => {
+    // Walk up from the wheel target — if any ancestor is a scrollable panel
+    // with content overflow, let that panel scroll normally (e.g. the country
+    // info panel). Otherwise we treat the wheel as a map-zoom request, even
+    // when the cursor is over a modal card like StartScreen.
+    const isInsideScrollable = (target: EventTarget | null): boolean => {
+      let el = target as Element | null;
+      while (el && el !== document.body && el !== document.documentElement) {
+        if (el.nodeType === 1) {
+          const style = window.getComputedStyle(el);
+          const oy = style.overflowY;
+          if (
+            (oy === 'auto' || oy === 'scroll') &&
+            el.scrollHeight > el.clientHeight + 1
+          ) {
+            return true;
+          }
+        }
+        el = el.parentElement;
+      }
+      return false;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      const svgEl = svgRef.current;
+      const zoom = zoomRef.current;
+      if (!svgEl || !zoom) return;
+      if (isInsideScrollable(e.target)) return; // let panels scroll
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+      const t = d3.zoomTransform(svgEl);
+      const rawDelta = e.deltaY;
+      if (rawDelta === 0) return;
+      const direction = rawDelta < 0 ? 1 : -1;
+      // Mouse wheel typically has deltaY ≈ 100, touchpads ≈ 1–10. Both work.
+      const stepBase = Math.abs(rawDelta) > 30 ? 1.2 : 1.08;
+      const factor = Math.pow(stepBase, direction);
+      const newK = Math.max(0.6, Math.min(12, t.k * factor));
+      if (newK === t.k) return;
+      const rect = svgEl.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const newTx = mx - ((mx - t.x) * newK) / t.k;
+      const newTy = my - ((my - t.y) * newK) / t.k;
+      d3.select(svgEl).call(
+        zoom.transform,
+        d3.zoomIdentity.translate(newTx, newTy).scale(newK),
+      );
+    };
+
+    // Belt-and-braces: attach to BOTH document and window in capture phase.
+    // Some browsers route synthetic / extension-injected wheel events to one
+    // and not the other.
+    const opts: AddEventListenerOptions = { passive: false, capture: true };
+    document.addEventListener('wheel', onWheel, opts);
+    window.addEventListener('wheel', onWheel, opts);
+    return () => {
+      document.removeEventListener('wheel', onWheel, opts);
+      window.removeEventListener('wheel', onWheel, opts);
+    };
+  }, []);
 
   // Right-click-drag attack: while a drag is in flight, follow the pointer
   // and on release dispatch to the country under the pointer.

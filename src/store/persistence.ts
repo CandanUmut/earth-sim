@@ -4,6 +4,7 @@ import type { TroopMovement } from '../game/movement';
 import type { AIBrain } from '../game/ai';
 import type { VictoryState } from '../game/victory';
 import type { ActiveBattle } from '../game/activeBattle';
+import type { War } from '../game/wars';
 
 const SAVE_KEY = 'terra-bellum-save-v4';
 const TUTORIAL_KEY = 'terra-bellum-tutorial-seen-v2';
@@ -20,6 +21,7 @@ export type SavePayload = {
   movements: TroopMovement[];
   activeBattles: Record<string, ActiveBattle>;
   garrisons: Record<string, Composition>;
+  wars: Record<string, War>;
   battleLog: BattleLogEntry[];
   populations: Record<string, number>;
   date: GameDate;
@@ -67,6 +69,7 @@ export function readSave(): SavePayload | null {
     }
     if (!parsed.activeBattles) parsed.activeBattles = {};
     if (!parsed.garrisons) parsed.garrisons = {};
+    if (!parsed.wars) parsed.wars = {};
     return parsed;
   } catch {
     return null;

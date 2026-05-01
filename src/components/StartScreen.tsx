@@ -41,31 +41,39 @@ export default function StartScreen() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.4 }}
-          className="absolute inset-0 z-40 flex items-center justify-center"
+          className="absolute inset-x-0 bottom-0 z-40 flex items-end justify-center"
           style={{
+            paddingBottom: 18,
+            // Soft shade only at the bottom edge so the entire map stays
+            // legible while the player picks a country.
             background:
-              'radial-gradient(ellipse at center, rgba(244,236,216,0.0) 30%, rgba(26,24,20,0.35) 100%)',
+              'linear-gradient(to top, rgba(26,24,20,0.18) 0%, rgba(26,24,20,0) 35%)',
             pointerEvents: 'none',
+            // Don't span the whole viewport — only the bottom strip — so
+            // wheel events above the gradient pass cleanly to the map even
+            // before our window-level handler runs.
+            top: 'auto',
+            height: 'auto',
           }}
         >
           <motion.div
-            initial={{ y: -20, opacity: 0 }}
+            initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.1, duration: 0.5 }}
             style={{
               background: 'var(--paper)',
               border: '1px solid var(--ink)',
               boxShadow: '0 8px 24px rgba(26,24,20,0.18)',
-              padding: '28px 36px',
-              maxWidth: 520,
-              width: 'min(92vw, 520px)',
+              padding: '16px 24px 18px',
+              maxWidth: 560,
+              width: 'min(94vw, 560px)',
               pointerEvents: 'auto',
               textAlign: 'center',
             }}
           >
             <div
               className="display"
-              style={{ fontSize: 32, lineHeight: 1.1, marginBottom: 6 }}
+              style={{ fontSize: 24, lineHeight: 1.1, marginBottom: 2 }}
             >
               Choose Your Nation
             </div>
@@ -73,8 +81,8 @@ export default function StartScreen() {
               style={{
                 fontStyle: 'italic',
                 color: 'var(--ink-faded)',
-                marginBottom: 22,
-                fontSize: 15,
+                marginBottom: 12,
+                fontSize: 13,
               }}
             >
               Click any country on the map. The campaign begins in January 1900.
@@ -82,11 +90,11 @@ export default function StartScreen() {
 
             <div
               style={{
-                minHeight: 116,
+                minHeight: 64,
                 borderTop: '1px solid var(--ink-faded)',
                 borderBottom: '1px solid var(--ink-faded)',
-                padding: '14px 0',
-                marginBottom: 20,
+                padding: '10px 0',
+                marginBottom: 12,
               }}
             >
               {country && nation ? (
@@ -151,7 +159,7 @@ export default function StartScreen() {
                 display: 'flex',
                 gap: 6,
                 justifyContent: 'center',
-                marginBottom: 14,
+                marginBottom: 10,
               }}
             >
               {(['easy', 'normal', 'hard'] as const).map((d) => (
@@ -164,9 +172,9 @@ export default function StartScreen() {
                       difficulty === d ? 'var(--ink)' : 'transparent',
                     color: difficulty === d ? 'var(--paper)' : 'var(--ink)',
                     border: '1px solid var(--ink)',
-                    padding: '6px 16px',
+                    padding: '4px 14px',
                     fontFamily: '"Crimson Pro", serif',
-                    fontSize: 13,
+                    fontSize: 12,
                     letterSpacing: '0.04em',
                     cursor: 'pointer',
                     textTransform: 'capitalize',
@@ -196,9 +204,9 @@ export default function StartScreen() {
                   background: selectedId ? 'var(--ink)' : 'transparent',
                   color: selectedId ? 'var(--paper)' : 'var(--ink-faded)',
                   border: '1px solid var(--ink)',
-                  padding: '10px 28px',
+                  padding: '8px 24px',
                   fontFamily: '"Crimson Pro", serif',
-                  fontSize: 18,
+                  fontSize: 16,
                   letterSpacing: '0.04em',
                   cursor: selectedId ? 'pointer' : 'not-allowed',
                   opacity: selectedId ? 1 : 0.5,

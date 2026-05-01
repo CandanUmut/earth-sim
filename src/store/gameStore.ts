@@ -24,7 +24,6 @@ import {
 import {
   newBrain,
   evaluateAllianceProposal,
-  evaluatePeaceProposal,
   evaluateTradeProposal,
   evaluateTributeDemand,
   evaluateVassalizationOffer,
@@ -43,6 +42,14 @@ import {
   type TroopMovement,
 } from '../game/movement';
 import type { ActiveBattle } from '../game/activeBattle';
+import {
+  buildPeaceOutcome,
+  createWar,
+  evaluatePeaceDeal,
+  warKey,
+  type War,
+  type WarGoal,
+} from '../game/wars';
 import type { GameEvent } from '../game/events';
 import { BALANCE_EVENTS } from '../game/events';
 import { type VictoryState } from '../game/victory';
@@ -87,6 +94,10 @@ export type BattleAnimation = {
   startedAt: number;
 };
 
+/** Critical event that auto-pauses the game and demands player attention. */
+export type PendingDecision =
+  | { kind: 'ai_declared_war'; aggressorId: string; tickCount: number };
+
 export const BATTLE_ANIM_MS = 2500;
 
 export type GameState = {
@@ -107,6 +118,14 @@ export type GameState = {
   activeBattles: Record<string, ActiveBattle>;
   /** Garrison troops stationed at conquered tiles. Map: tileId → composition. */
   garrisons: Record<string, Composition>;
+  /** Active wars keyed by `warKey(a,b)`. */
+  wars: Record<string, War>;
+  /** Critical decision waiting for the player; while non-null, game is paused. */
+  pendingDecision: PendingDecision | null;
+  /** War id currently displayed in the peace negotiation modal. */
+  peaceDialogWarId: string | null;
+  /** Country id currently being declared on (modal state). */
+  declareWarTargetId: string | null;
   eventLog: GameEvent[];
   /** Newest events queued for toast UI, then drained. */
   unreadEvents: GameEvent[];
@@ -154,8 +173,13 @@ export type GameState = {
   openDispatch: (toId: string) => void;
   closeDispatch: () => void;
   dispatchTroops: (toId: string, composition: Composition) => void;
-  declareWar: (targetId: string) => void;
-  proposePeace: (targetId: string) => void;
+  declareWar: (targetId: string, goals?: WarGoal[]) => void;
+  proposePeace: (targetId: string, claims?: WarGoal[]) => { accepted: boolean; reason: string };
+  openDeclareWar: (targetId: string) => void;
+  closeDeclareWar: () => void;
+  openPeaceDialog: (warId: string) => void;
+  closePeaceDialog: () => void;
+  acknowledgePending: () => void;
   proposeAlliance: (targetId: string) => void;
   sendGift: (targetId: string, gold: number) => void;
   proposeTradeAgreement: (targetId: string) => void;
@@ -198,8 +222,9 @@ function clearTickInterval() {
 }
 function ensureTickInterval(get: () => GameState) {
   clearTickInterval();
-  const { paused, gameStarted, victory, tick } = get();
+  const { paused, gameStarted, victory, tick, pendingDecision } = get();
   if (paused || !gameStarted || victory.kind !== 'ongoing') return;
+  if (pendingDecision) return; // hold the world until the player acks
   const ms = BALANCE.msPerTickAt1x / get().speed;
   tickIntervalId = setInterval(tick, ms);
 }
@@ -234,6 +259,10 @@ const initialState = {
   movements: [] as TroopMovement[],
   activeBattles: {} as Record<string, ActiveBattle>,
   garrisons: {} as Record<string, Composition>,
+  wars: {} as Record<string, War>,
+  pendingDecision: null as PendingDecision | null,
+  peaceDialogWarId: null as string | null,
+  declareWarTargetId: null as string | null,
   eventLog: [] as GameEvent[],
   unreadEvents: [] as GameEvent[],
   difficulty: 'normal' as Difficulty,
@@ -454,6 +483,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       movements: s.movements,
       activeBattles: s.activeBattles,
       garrisons: s.garrisons,
+      wars: s.wars,
       playerCountryId: s.playerCountryId,
       homeCountryId: s.homeCountryId,
       rng: Math.random,
@@ -490,6 +520,23 @@ export const useGameStore = create<GameState>((set, get) => ({
     );
     const unreadEvents = [...s.unreadEvents, ...result.newEvents].slice(-5);
 
+    // If the AI declared war on the player this tick, queue a pending decision
+    // and force-pause so the player notices.
+    let pendingDecision: PendingDecision | null = s.pendingDecision;
+    let paused = s.paused;
+    if (
+      !pendingDecision &&
+      result.aiDeclaredWarOnPlayer.length > 0 &&
+      s.playerCountryId
+    ) {
+      pendingDecision = {
+        kind: 'ai_declared_war',
+        aggressorId: result.aiDeclaredWarOnPlayer[0],
+        tickCount: s.tickCount + 1,
+      };
+      paused = true;
+    }
+
     set({
       date: result.date,
       tickCount: s.tickCount + 1,
@@ -503,6 +550,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       movements: result.movements,
       activeBattles: result.activeBattles,
       garrisons: result.garrisons,
+      wars: result.wars,
+      pendingDecision,
+      paused,
       eventLog,
       unreadEvents,
       battleLog,
@@ -510,6 +560,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       arrivalTrails: trails,
       victory: result.victory,
     });
+    if (paused !== s.paused) ensureTickInterval(get);
 
     // Sound cues for the new battles + outcome.
     // We deliberately reserve 'conquest' for the moment a NATION actually
@@ -556,6 +607,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         movements: now2.movements,
         activeBattles: now2.activeBattles,
         garrisons: now2.garrisons,
+        wars: now2.wars,
         battleLog: now2.battleLog,
         populations: now2.populations,
         date: now2.date,
@@ -668,28 +720,125 @@ export const useGameStore = create<GameState>((set, get) => ({
     playSound('march');
   },
 
-  declareWar: (targetId) => {
-    const { playerCountryId, nations } = get();
+  declareWar: (targetId, goals = []) => {
+    const { playerCountryId, nations, wars, tickCount } = get();
     if (!playerCountryId || playerCountryId === targetId) return;
-    set({ nations: setMutualStance(nations, playerCountryId, targetId, 'war') });
+    const k = warKey(playerCountryId, targetId);
+    const nextNations = setMutualStance(nations, playerCountryId, targetId, 'war');
+    const nextWars = wars[k]
+      ? wars
+      : {
+          ...wars,
+          [k]: createWar({
+            attackerId: playerCountryId,
+            defenderId: targetId,
+            startedAtTick: tickCount,
+            goals,
+          }),
+        };
+    set({ nations: nextNations, wars: nextWars, declareWarTargetId: null });
+    playSound('cannon');
   },
 
-  proposePeace: (targetId) => {
-    const { playerCountryId, nations, brains } = get();
-    if (!playerCountryId || playerCountryId === targetId) return;
-    const targetBrain = brains[targetId];
-    if (!targetBrain) return;
-    const accepted = evaluatePeaceProposal({
-      proposerId: playerCountryId,
-      targetId,
-      nations,
-      brain: targetBrain,
-    });
-    if (accepted) {
+  proposePeace: (targetId, claims) => {
+    const { playerCountryId, nations, wars, countries, control } = get();
+    if (!playerCountryId || playerCountryId === targetId) {
+      return { accepted: false, reason: 'Invalid target.' };
+    }
+    const k = warKey(playerCountryId, targetId);
+    const war = wars[k];
+    if (!war) {
+      // No war record: fall back to plain stance reset (legacy/no-data path).
+      if (nations[playerCountryId]?.stance[targetId] !== 'war') {
+        return { accepted: false, reason: 'Not at war.' };
+      }
       set({
         nations: setMutualStance(nations, playerCountryId, targetId, 'neutral'),
       });
+      return { accepted: true, reason: 'White peace.' };
     }
+    const offered = claims ?? war.attackerGoals;
+    const decision = evaluatePeaceDeal({
+      war,
+      evaluatorId: targetId,
+      claims: offered,
+    });
+    if (!decision.accept) return { accepted: false, reason: decision.reason };
+
+    // Apply the deal: transfer claimed tiles to attacker, set tribute/vassal.
+    const outcome = buildPeaceOutcome(war, offered, countries);
+    let nextNations = setMutualStance(
+      nations,
+      playerCountryId,
+      targetId,
+      'neutral',
+    );
+    let nextOwnership = { ...get().ownership };
+    let nextControl = { ...control };
+    for (const tileId of outcome.tilesToAttacker) {
+      nextOwnership[tileId] = playerCountryId;
+      nextControl[tileId] = 60;
+    }
+    if (outcome.tribute > 0) {
+      const player = nextNations[playerCountryId];
+      const target = nextNations[targetId];
+      if (player && target) {
+        nextNations = {
+          ...nextNations,
+          [playerCountryId]: {
+            ...player,
+            tributeReceived: {
+              ...player.tributeReceived,
+              [targetId]: outcome.tribute,
+            },
+          },
+          [targetId]: {
+            ...target,
+            tributePaid: {
+              ...target.tributePaid,
+              [playerCountryId]: outcome.tribute,
+            },
+          },
+        };
+      }
+    }
+    if (outcome.vassalize) {
+      const player = nextNations[playerCountryId];
+      const target = nextNations[targetId];
+      if (player && target && !target.vassalOf) {
+        nextNations = {
+          ...nextNations,
+          [playerCountryId]: {
+            ...player,
+            vassals: [...player.vassals, targetId],
+          },
+          [targetId]: { ...target, vassalOf: playerCountryId },
+        };
+        // Vassal stance becomes allied to overlord.
+        nextNations = setMutualStance(nextNations, playerCountryId, targetId, 'allied');
+      }
+    }
+    const nextWars = { ...wars };
+    delete nextWars[outcome.warIdToRemove === war.id ? k : k];
+    delete nextWars[k];
+    set({
+      nations: nextNations,
+      wars: nextWars,
+      ownership: nextOwnership,
+      control: nextControl,
+      peaceDialogWarId: null,
+    });
+    playSound('alliance');
+    return { accepted: true, reason: decision.reason };
+  },
+
+  openDeclareWar: (targetId) => set({ declareWarTargetId: targetId }),
+  closeDeclareWar: () => set({ declareWarTargetId: null }),
+  openPeaceDialog: (warId) => set({ peaceDialogWarId: warId }),
+  closePeaceDialog: () => set({ peaceDialogWarId: null }),
+  acknowledgePending: () => {
+    set({ pendingDecision: null });
+    ensureTickInterval(get);
   },
 
   proposeAlliance: (targetId) => {
@@ -1032,6 +1181,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       movements: save.movements,
       activeBattles: save.activeBattles ?? {},
       garrisons: save.garrisons ?? {},
+      wars: save.wars ?? {},
       battleLog: save.battleLog,
       populations: save.populations ?? get().populations,
       arrivalTrails: [],
@@ -1247,6 +1397,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       movements: s.movements,
       activeBattles: s.activeBattles,
       garrisons: s.garrisons,
+      wars: s.wars,
       battleLog: s.battleLog,
       populations: s.populations,
       date: s.date,

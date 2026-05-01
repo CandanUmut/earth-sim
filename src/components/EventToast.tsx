@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, X } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
@@ -31,14 +31,39 @@ export default function EventToast() {
   const setSelected = useGameStore((s) => s.setSelected);
   const setCameraTarget = useGameStore((s) => s.setCameraTarget);
 
-  // Auto-dismiss the oldest after a few seconds.
+  // Each event gets its own dismiss timer keyed by id, so a stream of new
+  // events doesn't keep resetting the oldest one's countdown.
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
   useEffect(() => {
-    if (unread.length === 0) return;
-    const t = setTimeout(() => {
-      acknowledge(unread[0].id);
-    }, DISMISS_AFTER_MS);
-    return () => clearTimeout(t);
+    const live = new Set(unread.map((e) => e.id));
+    // Schedule timers for any new ids we haven't seen yet.
+    for (const e of unread) {
+      if (timersRef.current.has(e.id)) continue;
+      const id = e.id;
+      const t = setTimeout(() => {
+        timersRef.current.delete(id);
+        acknowledge(id);
+      }, DISMISS_AFTER_MS);
+      timersRef.current.set(id, t);
+    }
+    // Drop timers for events that have been acknowledged (no longer in list).
+    for (const [id, t] of timersRef.current.entries()) {
+      if (!live.has(id)) {
+        clearTimeout(t);
+        timersRef.current.delete(id);
+      }
+    }
   }, [unread, acknowledge]);
+
+  // On unmount, clear every pending timer.
+  useEffect(() => {
+    return () => {
+      for (const t of timersRef.current.values()) clearTimeout(t);
+      timersRef.current.clear();
+    };
+  }, []);
 
   return (
     <div

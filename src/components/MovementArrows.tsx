@@ -3,6 +3,8 @@ import type { Country } from '../game/world';
 import type { TroopMovement } from '../game/movement';
 import { isNavalLeg } from '../game/movement';
 import type { ArrivalEvent } from '../game/tick';
+import { useGameStore } from '../store/gameStore';
+import { useSprite } from '../util/spriteCache';
 
 type Props = {
   projection: GeoProjection;
@@ -83,6 +85,9 @@ export default function MovementArrows({
   playerId,
   playerStance,
 }: Props) {
+  const nations = useGameStore((s) => s.nations);
+  const shipSprite = useSprite('marker_ship.png');
+  const tankSprite = useSprite('marker_tank.png');
   return (
     <g pointerEvents="none">
       <defs>
@@ -176,6 +181,9 @@ export default function MovementArrows({
           }
         }
         const dashArray = goesByWater ? '2 3' : '6 4';
+        const ownerNation = nations[mv.ownerId];
+        const isModern =
+          !!ownerNation && ownerNation.unlockedTech.includes('mil_combined_arms');
 
         return (
           <g key={mv.id}>
@@ -190,6 +198,30 @@ export default function MovementArrows({
               markerEnd={`url(#${markerId})`}
               style={{ animation: 'march 1.2s linear infinite' }}
             />
+            {/* Naval column: ship sprite at the midpoint */}
+            {goesByWater && shipSprite && (
+              <image
+                href={shipSprite}
+                x={mid[0] - 5}
+                y={mid[1] - 8}
+                width={10}
+                height={10}
+                preserveAspectRatio="xMidYMid meet"
+                opacity={0.95}
+              />
+            )}
+            {/* Modern-tech column: tank sprite at the source end */}
+            {!goesByWater && isModern && tankSprite && (
+              <image
+                href={tankSprite}
+                x={a[0] - 4}
+                y={a[1] - 8}
+                width={8}
+                height={8}
+                preserveAspectRatio="xMidYMid meet"
+                opacity={0.95}
+              />
+            )}
             {/* Troop count label following the column */}
             <g transform={`translate(${mid[0]} ${mid[1]})`}>
               <rect

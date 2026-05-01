@@ -48,6 +48,13 @@ import {
   type GameEvent,
 } from './events';
 import {
+  applyTimeExhaustion,
+  bumpExhaustionFromBattle,
+  createWar,
+  warKey,
+  type War,
+} from './wars';
+import {
   autoRecruitUnlocked,
   autoRecruitInterval,
   autoRecruitThreshold,
@@ -123,6 +130,7 @@ export type TickInput = {
   movements: TroopMovement[];
   activeBattles: Record<string, ActiveBattle>;
   garrisons: Record<string, Composition>;
+  wars: Record<string, War>;
   playerCountryId: string | null;
   homeCountryId: string | null;
   rng: () => number;
@@ -140,9 +148,12 @@ export type TickOutput = {
   movements: TroopMovement[];
   activeBattles: Record<string, ActiveBattle>;
   garrisons: Record<string, Composition>;
+  wars: Record<string, War>;
   newBattles: BattleLogEntry[];
   newArrivals: ArrivalEvent[];
   newEvents: GameEvent[];
+  /** Nations who declared war on the player this tick — used for auto-pause. */
+  aiDeclaredWarOnPlayer: string[];
   victory: VictoryState;
 };
 
@@ -1211,29 +1222,34 @@ function applyAIAction(args: {
   nations: Record<string, Nation>;
   brains: Record<string, AIBrain>;
   movements: TroopMovement[];
+  wars: Record<string, War>;
+  playerCountryId: string | null;
   tickCount: number;
+  aiDeclaredWarOnPlayer: string[];
 }): {
   nations: Record<string, Nation>;
   movements: TroopMovement[];
+  wars: Record<string, War>;
 } {
-  const { selfId, action, countries, brains, tickCount } = args;
+  const { selfId, action, countries, brains, tickCount, playerCountryId } = args;
   let nations = args.nations;
   let movements = args.movements;
+  let wars = args.wars;
   const self = nations[selfId];
   const country = countries[selfId];
-  if (!self || !country) return { nations, movements };
+  if (!self || !country) return { nations, movements, wars };
 
   switch (action.kind) {
     case 'idle':
-      return { nations, movements };
+      return { nations, movements, wars };
     case 'recruit': {
       // Auto-recruit cycle handles bulk growth; AI think-time recruitment
       // is now redundant. Keep idle.
-      return { nations, movements };
+      return { nations, movements, wars };
     }
     case 'invest_tech': {
       const cost = techInvestmentCost();
-      if (self.gold < cost) return { nations, movements };
+      if (self.gold < cost) return { nations, movements, wars };
       nations = {
         ...nations,
         [selfId]: {
@@ -1242,16 +1258,16 @@ function applyAIAction(args: {
           tech: self.tech + techIncrement(self.tech, country.specializations),
         },
       };
-      return { nations, movements };
+      return { nations, movements, wars };
     }
     case 'dispatch': {
       const path = findPath(countries, action.fromId, action.toId);
-      if (!path) return { nations, movements };
+      if (!path) return { nations, movements, wars };
       const tot = totalTroops(self);
       const garrison = Math.floor(tot * BALANCE_MOVEMENT.homeGarrisonFraction);
       const available = tot - garrison;
       const send = Math.min(action.troops, available);
-      if (send <= 0) return { nations, movements };
+      if (send <= 0) return { nations, movements, wars };
       const prop = available > 0 ? send / available : 0;
       const sendInf = Math.floor(
         (self.infantry -
@@ -1275,7 +1291,7 @@ function applyAIAction(args: {
       };
       const total =
         composition.infantry + composition.cavalry + composition.artillery;
-      if (total <= 0) return { nations, movements };
+      if (total <= 0) return { nations, movements, wars };
       nations = {
         ...nations,
         [selfId]: {
@@ -1299,11 +1315,27 @@ function applyAIAction(args: {
           launchTick: tickCount,
         },
       ];
-      return { nations, movements };
+      return { nations, movements, wars };
     }
     case 'declare_war': {
+      const wasAtWar = self.stance[action.targetId] === 'war';
       nations = setMutualStance(nations, selfId, action.targetId, 'war');
-      return { nations, movements };
+      const k = warKey(selfId, action.targetId);
+      if (!wars[k]) {
+        wars = {
+          ...wars,
+          [k]: createWar({
+            attackerId: selfId,
+            defenderId: action.targetId,
+            startedAtTick: tickCount,
+            goals: [],
+          }),
+        };
+        if (!wasAtWar && action.targetId === playerCountryId) {
+          args.aiDeclaredWarOnPlayer.push(selfId);
+        }
+      }
+      return { nations, movements, wars };
     }
     case 'propose_peace': {
       const targetBrain = brains[action.targetId];
@@ -1317,8 +1349,14 @@ function applyAIAction(args: {
         : true;
       if (accepted) {
         nations = setMutualStance(nations, selfId, action.targetId, 'neutral');
+        const k = warKey(selfId, action.targetId);
+        if (wars[k]) {
+          const next = { ...wars };
+          delete next[k];
+          wars = next;
+        }
       }
-      return { nations, movements };
+      return { nations, movements, wars };
     }
     case 'propose_alliance': {
       const targetBrain = brains[action.targetId];
@@ -1333,7 +1371,7 @@ function applyAIAction(args: {
       if (accepted) {
         nations = setMutualStance(nations, selfId, action.targetId, 'allied');
       }
-      return { nations, movements };
+      return { nations, movements, wars };
     }
   }
 }
@@ -1411,6 +1449,8 @@ export function runTick(input: TickInput): TickOutput {
   contestedBy = regen.contestedBy;
 
   let brains = { ...input.brains };
+  let wars = { ...input.wars };
+  const aiDeclaredWarOnPlayer: string[] = [];
   for (const [id, brain] of Object.entries(input.brains)) {
     if (input.playerCountryId && id === input.playerCountryId) continue;
     const advancedBrain: AIBrain = {
@@ -1436,10 +1476,14 @@ export function runTick(input: TickInput): TickOutput {
       nations,
       brains,
       movements,
+      wars,
+      playerCountryId: input.playerCountryId,
       tickCount: input.tickCount,
+      aiDeclaredWarOnPlayer,
     });
     nations = applied.nations;
     movements = applied.movements;
+    wars = applied.wars;
     brains[id] = { ...advancedBrain, ticksSinceThink: 0 };
   }
 
@@ -1463,6 +1507,19 @@ export function runTick(input: TickInput): TickOutput {
         const stanceToPlayer = n.stance[playerId] ?? 'neutral';
         if (stanceToPlayer === 'allied' || stanceToPlayer === 'war') continue;
         nations = setMutualStance(nations, id, playerId, 'war');
+        const wk = warKey(id, playerId);
+        if (!wars[wk]) {
+          wars = {
+            ...wars,
+            [wk]: createWar({
+              attackerId: id,
+              defenderId: playerId,
+              startedAtTick: input.tickCount,
+              goals: [],
+            }),
+          };
+          aiDeclaredWarOnPlayer.push(id);
+        }
         // Reduce reputation of player slightly each new declaration as the
         // coalition spreads its propaganda.
         const player = nations[playerId];
@@ -1607,6 +1664,44 @@ export function runTick(input: TickInput): TickOutput {
     }
   }
 
+  // Apply war exhaustion from each battle that resolved this tick. We match
+  // the participants to a war record (if any) and bump the loser's exhaustion.
+  for (const battle of allBattleEntries) {
+    const k = warKey(battle.attackerOwnerId, battle.defenderOwnerId);
+    const war = wars[k];
+    if (!war) continue;
+    const attackerLost = !battle.attackerWon;
+    wars = {
+      ...wars,
+      [k]: bumpExhaustionFromBattle(war, attackerLost, battle.conquered),
+    };
+  }
+
+  // Time-based exhaustion: long wars become harder to sustain.
+  for (const [k, war] of Object.entries(wars)) {
+    const updated = applyTimeExhaustion(war, input.tickCount);
+    if (updated !== war) wars = { ...wars, [k]: updated };
+  }
+
+  // Prune wars whose stance has been reset to non-war (e.g. via vassalize,
+  // peace deal applied at store layer). We don't auto-end a war just because
+  // the loser was annihilated — that's handled when their last tile flips.
+  for (const [k, war] of Object.entries(wars)) {
+    const a = nations[war.attackerId];
+    const b = nations[war.defenderId];
+    if (!a || !b) {
+      const next = { ...wars };
+      delete next[k];
+      wars = next;
+      continue;
+    }
+    if ((a.stance[war.defenderId] ?? 'neutral') !== 'war') {
+      const next = { ...wars };
+      delete next[k];
+      wars = next;
+    }
+  }
+
   let victory: VictoryState = { kind: 'ongoing' };
   if (input.playerCountryId && input.homeCountryId) {
     victory = evaluateVictory({
@@ -1630,9 +1725,11 @@ export function runTick(input: TickInput): TickOutput {
     movements,
     activeBattles,
     garrisons,
+    wars,
     newBattles: allBattleEntries,
     newArrivals: moveStep.arrivals,
     newEvents,
+    aiDeclaredWarOnPlayer,
     victory,
   };
 }

@@ -34,6 +34,9 @@ export type HistoricalEvent = {
   flavor: string;
   /** Optional gameplay effect; when absent, the card is purely cosmetic. */
   effect?: HistoricalEffect;
+  /** Era-defining moments — these flash on-screen briefly. Everything else
+   *  lives only in the newspaper archive. */
+  major?: boolean;
 };
 
 /**
@@ -156,6 +159,7 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     title: 'Archduke Franz Ferdinand assassinated in Sarajevo',
     flavor:
       'A Serbian student fires two shots in a Sarajevo street. The Austro-Hungarian heir falls. The chain of alliances begins to tighten.',
+    major: true,
   },
   {
     id: 'h-1914-greatwar',
@@ -164,6 +168,7 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     title: 'The Great War begins',
     flavor:
       'Within five weeks of the assassination, Europe sleepwalks into the largest war it has ever known. Generations are conscripted; a continent puts on uniform.',
+    major: true,
   },
   {
     id: 'h-1915-lusitania',
@@ -205,6 +210,7 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     title: 'Armistice — eleventh hour, eleventh day, eleventh month',
     flavor:
       'The guns fall silent in a railway carriage in the forest of Compiègne. Twenty million are dead. The peace will not hold.',
+    major: true,
   },
   {
     id: 'h-1918-flu',
@@ -264,6 +270,7 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     flavor:
       'Sixteen million shares change hands in a single panic. The American boom ends. A long winter begins for every economy bound to it.',
     effect: { kind: 'gold_penalty_world', amount: 0.18 },
+    major: true,
   },
   {
     id: 'h-1927-lindbergh',
@@ -330,6 +337,7 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     title: 'Germany invades Poland',
     flavor:
       'At dawn on the first of September, the Wehrmacht crosses the border. Britain and France declare war within forty-eight hours. The world inhales.',
+    major: true,
   },
   {
     id: 'h-1940-dunkirk',
@@ -354,6 +362,7 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     title: 'Pearl Harbor — a date which will live in infamy',
     flavor:
       'Six Japanese carriers strike the Pacific Fleet at anchor. By nightfall, the United States is no longer at peace.',
+    major: true,
   },
   {
     id: 'h-1942-stalingrad',
@@ -378,6 +387,7 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     title: 'D-Day — landings at Normandy',
     flavor:
       'Five beaches, twelve nations, one tide. The largest seaborne invasion in history opens the Western Front in Europe.',
+    major: true,
   },
   {
     id: 'h-1945-veday',
@@ -394,6 +404,7 @@ export const HISTORICAL_EVENTS: HistoricalEvent[] = [
     title: 'Hiroshima',
     flavor:
       'A single bomb, a single city. The architecture of war is reset overnight. The mushroom cloud will define the second half of the century.',
+    major: true,
   },
   {
     id: 'h-1945-vjday',

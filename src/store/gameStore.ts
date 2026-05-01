@@ -174,8 +174,14 @@ export type GameState = {
   historicalFired: Record<string, true>;
   /** Queue of cinematic cards (PAUSES the game). Player-affecting only. */
   cinematicQueue: CinematicCard[];
-  /** Non-blocking world news ticker — auto-dismisses, doesn't pause. */
-  worldNews: WorldNewsItem[];
+  /** Newspaper archive — every dispatch ever, capped at 50. Read at leisure. */
+  newsArchive: WorldNewsItem[];
+  /** Single most-recent BIG dispatch shown briefly on-screen. Auto-dismisses. */
+  breakingNews: WorldNewsItem | null;
+  /** Number of unread items in newsArchive (since the player last opened it). */
+  newsUnreadCount: number;
+  /** Whether the newspaper panel is open. */
+  newspaperOpen: boolean;
   /** Last in-game year a chapter title was shown. */
   lastChapterYear: number | null;
   /** Critical decision waiting for the player; while non-null, game is paused. */
@@ -239,7 +245,9 @@ export type GameState = {
   closePeaceDialog: () => void;
   acknowledgePending: () => void;
   dismissCinematic: () => void;
-  dismissNews: (id: string) => void;
+  dismissBreakingNews: () => void;
+  openNewspaper: () => void;
+  closeNewspaper: () => void;
   proposeAlliance: (targetId: string) => void;
   sendGift: (targetId: string, gold: number) => void;
   proposeTradeAgreement: (targetId: string) => void;
@@ -353,7 +361,10 @@ const initialState = {
   leaders: {} as Record<string, Leader>,
   historicalFired: {} as Record<string, true>,
   cinematicQueue: [] as CinematicCard[],
-  worldNews: [] as WorldNewsItem[],
+  newsArchive: [] as WorldNewsItem[],
+  breakingNews: null as WorldNewsItem | null,
+  newsUnreadCount: 0,
+  newspaperOpen: false,
   lastChapterYear: null as number | null,
   pendingDecision: null as PendingDecision | null,
   peaceDialogWarId: null as string | null,
@@ -727,8 +738,22 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     const cinematicQueue = [...s.cinematicQueue, ...newCinematics];
-    // World news capped at 5 latest items so the banner doesn't clog.
-    const worldNews = [...s.worldNews, ...newWorldNews].slice(-5);
+
+    // Archive grows with EVERY news item, capped at 50. The newspaper button
+    // shows an unread badge until the player opens the panel.
+    let newsArchive = s.newsArchive;
+    let breakingNews = s.breakingNews;
+    let newsUnreadCount = s.newsUnreadCount;
+    if (newWorldNews.length > 0) {
+      newsArchive = [...s.newsArchive, ...newWorldNews].slice(-50);
+      newsUnreadCount += newWorldNews.length;
+      // Pick at most ONE item to flash on-screen — only major historical
+      // events. Distant capitals & chapter changes go straight to archive.
+      const flashCandidate = newWorldNews.find(
+        (n) => n.kind === 'historical' && (n.event.major || !!n.event.effect),
+      );
+      if (flashCandidate) breakingNews = flashCandidate;
+    }
     if (newCinematics.length > 0) paused = true;
 
     set({
@@ -747,7 +772,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       wars: result.wars,
       historicalFired: result.historicalFired,
       cinematicQueue,
-      worldNews,
+      newsArchive,
+      breakingNews,
+      newsUnreadCount,
       lastChapterYear,
       pendingDecision,
       paused,
@@ -1047,8 +1074,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (next.length === 0) ensureTickInterval(get);
   },
 
-  dismissNews: (id) => {
-    set({ worldNews: get().worldNews.filter((n) => n.id !== id) });
+  dismissBreakingNews: () => {
+    set({ breakingNews: null });
+  },
+  openNewspaper: () => {
+    set({ newspaperOpen: true, newsUnreadCount: 0 });
+  },
+  closeNewspaper: () => {
+    set({ newspaperOpen: false });
   },
 
   proposeAlliance: (targetId) => {

@@ -1545,6 +1545,46 @@ export function runTick(input: TickInput): TickOutput {
     }
   }
 
+  // First-contact attacks on the player. The AI almost never uses the
+  // `declare_war` action — it just sends troops, which flips stance via
+  // setMutualStance inside processMovements. That means the war_declared
+  // cinematic never fired for the most common case (AI raid on a player
+  // tile). Here we look at this tick's battle log: any battle where the
+  // defender owner is the player AND the player wasn't ALREADY at war
+  // with the attacker before this tick → first hostile contact, signal it.
+  if (input.playerCountryId) {
+    const playerId = input.playerCountryId;
+    const seen = new Set(aiDeclaredWarOnPlayer);
+    for (const battle of allBattleEntries) {
+      if (battle.attackerOwnerId === playerId) continue;
+      if (battle.defenderOwnerId !== playerId) continue;
+      const attackerId = battle.attackerOwnerId;
+      const wasAlreadyAtWar =
+        input.nations[playerId]?.stance[attackerId] === 'war';
+      if (wasAlreadyAtWar) continue;
+      // Also skip if a war record predates this tick.
+      const k = warKey(attackerId, playerId);
+      const preExistingWar = input.wars[k];
+      if (preExistingWar) continue;
+      // Ensure a war record exists going forward.
+      if (!wars[k]) {
+        wars = {
+          ...wars,
+          [k]: createWar({
+            attackerId,
+            defenderId: playerId,
+            startedAtTick: input.tickCount,
+            goals: [],
+          }),
+        };
+      }
+      if (!seen.has(attackerId)) {
+        aiDeclaredWarOnPlayer.push(attackerId);
+        seen.add(attackerId);
+      }
+    }
+  }
+
   // Rebellion check: very small chance per conquered tile per tick of an
   // uprising. Tiles with garrisons are heavily protected; recently-conquered
   // tiles (within 2 in-game years) are off-limits — the player just won them.

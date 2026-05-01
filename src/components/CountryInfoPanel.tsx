@@ -78,6 +78,9 @@ export default function CountryInfoPanel() {
     s.selectedCountryId ? s.control[s.selectedCountryId] ?? 100 : 100,
   );
   const playerId = useGameStore((s) => s.playerCountryId);
+  const leaderForSelected = useGameStore((s) =>
+    s.selectedCountryId ? s.leaders[s.selectedCountryId] ?? null : null,
+  );
   const playerNation = useGameStore((s) =>
     s.playerCountryId ? s.nations[s.playerCountryId] : null,
   );
@@ -151,14 +154,35 @@ export default function CountryInfoPanel() {
             style={{
               fontSize: 28,
               lineHeight: 1.05,
-              borderBottom: '1px solid var(--ink-faded)',
-              paddingBottom: 8,
-              marginBottom: 14,
               paddingRight: 28,
             }}
           >
             {country.name}
           </div>
+          {leaderForSelected && (
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--ink-faded)',
+                fontStyle: 'italic',
+                paddingBottom: 8,
+                borderBottom: '1px solid var(--ink-faded)',
+                marginBottom: 14,
+              }}
+            >
+              {leaderForSelected.title} {leaderForSelected.name} —{' '}
+              {leaderForSelected.traits.join(', ')}
+            </div>
+          )}
+          {!leaderForSelected && (
+            <div
+              style={{
+                borderBottom: '1px solid var(--ink-faded)',
+                paddingBottom: 8,
+                marginBottom: 14,
+              }}
+            />
+          )}
 
           {playerId && !playerOwnsThis && (
             <div

@@ -55,6 +55,10 @@ import {
   type War,
 } from './wars';
 import {
+  pickHistoricalEventForDate,
+  type HistoricalEvent,
+} from './historicalEvents';
+import {
   autoRecruitUnlocked,
   autoRecruitInterval,
   autoRecruitThreshold,
@@ -131,6 +135,8 @@ export type TickInput = {
   activeBattles: Record<string, ActiveBattle>;
   garrisons: Record<string, Composition>;
   wars: Record<string, War>;
+  /** Already-fired historical event ids so each fires once per campaign. */
+  historicalFired: Record<string, true>;
   playerCountryId: string | null;
   homeCountryId: string | null;
   rng: () => number;
@@ -149,11 +155,14 @@ export type TickOutput = {
   activeBattles: Record<string, ActiveBattle>;
   garrisons: Record<string, Composition>;
   wars: Record<string, War>;
+  historicalFired: Record<string, true>;
   newBattles: BattleLogEntry[];
   newArrivals: ArrivalEvent[];
   newEvents: GameEvent[];
   /** Nations who declared war on the player this tick — used for auto-pause. */
   aiDeclaredWarOnPlayer: string[];
+  /** Historical event firing this tick, or null. */
+  historicalEvent: HistoricalEvent | null;
   victory: VictoryState;
 };
 
@@ -1702,6 +1711,71 @@ export function runTick(input: TickInput): TickOutput {
     }
   }
 
+  // Historical event check — once per (year, month).
+  let historicalEvent: HistoricalEvent | null = null;
+  let historicalFired = input.historicalFired;
+  const candidate = pickHistoricalEventForDate(date, historicalFired);
+  if (candidate) {
+    historicalEvent = candidate;
+    historicalFired = { ...historicalFired, [candidate.id]: true };
+    // Apply effects.
+    if (candidate.effect) {
+      const eff = candidate.effect;
+      if (eff.kind === 'tech_bonus' && eff.country) {
+        const n = nations[eff.country];
+        if (n) {
+          nations = {
+            ...nations,
+            [eff.country]: { ...n, tech: n.tech + eff.amount },
+          };
+        }
+      } else if (eff.kind === 'gold_bonus' && eff.country) {
+        const n = nations[eff.country];
+        if (n) {
+          nations = {
+            ...nations,
+            [eff.country]: { ...n, gold: n.gold + eff.amount },
+          };
+        }
+      } else if (eff.kind === 'gold_penalty_world') {
+        const next: Record<string, Nation> = {};
+        for (const [id, n] of Object.entries(nations)) {
+          next[id] = {
+            ...n,
+            gold: Math.max(0, n.gold * (1 - eff.amount)),
+          };
+        }
+        nations = next;
+      } else if (eff.kind === 'pop_penalty_world') {
+        const nextPops: Record<string, number> = {};
+        for (const [id, p] of Object.entries(populations)) {
+          nextPops[id] = Math.max(1, Math.round(p * (1 - eff.amount)));
+        }
+        populations = nextPops;
+      } else if (eff.kind === 'control_drop' && eff.country) {
+        const tilesOwnedByTarget = Object.keys(ownership).filter(
+          (tid) => ownership[tid] === eff.country,
+        );
+        const nextControl = { ...control };
+        for (const tid of tilesOwnedByTarget) {
+          nextControl[tid] = Math.max(20, (nextControl[tid] ?? 100) - eff.amount);
+        }
+        control = nextControl;
+      } else if (eff.kind === 'reputation_drop' && eff.country) {
+        const n = nations[eff.country];
+        if (n) {
+          nations = {
+            ...nations,
+            [eff.country]: {
+              ...n,
+              reputation: Math.max(0, n.reputation - eff.amount),
+            },
+          };
+        }
+      }
+    }
+  }
+
   let victory: VictoryState = { kind: 'ongoing' };
   if (input.playerCountryId && input.homeCountryId) {
     victory = evaluateVictory({
@@ -1726,10 +1800,12 @@ export function runTick(input: TickInput): TickOutput {
     activeBattles,
     garrisons,
     wars,
+    historicalFired,
     newBattles: allBattleEntries,
     newArrivals: moveStep.arrivals,
     newEvents,
     aiDeclaredWarOnPlayer,
+    historicalEvent,
     victory,
   };
 }

@@ -16,6 +16,7 @@ import TechTreePanel from './components/TechTreePanel';
 import DeclareWarModal from './components/DeclareWarModal';
 import PeaceModal from './components/PeaceModal';
 import PendingDecisionToast from './components/PendingDecisionToast';
+import CinematicCard from './components/CinematicCard';
 import { useGameStore } from './store/gameStore';
 import {
   setMusicMode,
@@ -99,6 +100,7 @@ export default function App() {
       <DeclareWarModal />
       <PeaceModal />
       <PendingDecisionToast />
+      <CinematicCard />
       <StartScreen />
       <Tutorial />
       <EndScreen />

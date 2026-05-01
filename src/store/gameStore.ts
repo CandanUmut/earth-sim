@@ -50,6 +50,8 @@ import {
   type War,
   type WarGoal,
 } from '../game/wars';
+import { generateLeader, type Leader } from '../game/leaders';
+import type { HistoricalEvent } from '../game/historicalEvents';
 import type { GameEvent } from '../game/events';
 import { BALANCE_EVENTS } from '../game/events';
 import { type VictoryState } from '../game/victory';
@@ -98,6 +100,32 @@ export type BattleAnimation = {
 export type PendingDecision =
   | { kind: 'ai_declared_war'; aggressorId: string; tickCount: number };
 
+/** A cinematic card waiting to be shown to the player. */
+export type CinematicCard =
+  | {
+      kind: 'historical';
+      event: HistoricalEvent;
+      shownAt: number;
+    }
+  | {
+      kind: 'war_declared';
+      aggressorId: string;
+      defenderId: string;
+      shownAt: number;
+    }
+  | {
+      kind: 'capital_fell';
+      fallenId: string;
+      conquerorId: string;
+      shownAt: number;
+    }
+  | {
+      kind: 'chapter';
+      year: number;
+      title: string;
+      shownAt: number;
+    };
+
 export const BATTLE_ANIM_MS = 2500;
 
 export type GameState = {
@@ -120,6 +148,14 @@ export type GameState = {
   garrisons: Record<string, Composition>;
   /** Active wars keyed by `warKey(a,b)`. */
   wars: Record<string, War>;
+  /** Leaders keyed by country id. Stable for the campaign. */
+  leaders: Record<string, Leader>;
+  /** Historical events that have already fired this campaign. */
+  historicalFired: Record<string, true>;
+  /** Queue of cinematic cards waiting to be acknowledged (FIFO). */
+  cinematicQueue: CinematicCard[];
+  /** Last in-game year a chapter title was shown. */
+  lastChapterYear: number | null;
   /** Critical decision waiting for the player; while non-null, game is paused. */
   pendingDecision: PendingDecision | null;
   /** War id currently displayed in the peace negotiation modal. */
@@ -180,6 +216,7 @@ export type GameState = {
   openPeaceDialog: (warId: string) => void;
   closePeaceDialog: () => void;
   acknowledgePending: () => void;
+  dismissCinematic: () => void;
   proposeAlliance: (targetId: string) => void;
   sendGift: (targetId: string, gold: number) => void;
   proposeTradeAgreement: (targetId: string) => void;
@@ -222,11 +259,27 @@ function clearTickInterval() {
 }
 function ensureTickInterval(get: () => GameState) {
   clearTickInterval();
-  const { paused, gameStarted, victory, tick, pendingDecision } = get();
+  const { paused, gameStarted, victory, tick, pendingDecision, cinematicQueue } = get();
   if (paused || !gameStarted || victory.kind !== 'ongoing') return;
   if (pendingDecision) return; // hold the world until the player acks
+  if (cinematicQueue.length > 0) return; // hold while a card is showing
   const ms = BALANCE.msPerTickAt1x / get().speed;
   tickIntervalId = setInterval(tick, ms);
+}
+
+function pickChapterTitle(
+  year: number,
+  wars: Record<string, War>,
+): string | null {
+  // First chapter every campaign so it always announces itself.
+  const warCount = Object.keys(wars).length;
+  if (year === 1900) return 'The Old Order';
+  if (warCount >= 6) return 'The World Aflame';
+  if (warCount >= 3) return 'The Powder Keg';
+  if (warCount === 0) return 'A Long Calm';
+  // Default: every year gets *something* so the rhythm is consistent.
+  if (year % 5 === 0) return `${year} — A New Decade`;
+  return `${year}`;
 }
 
 function setMutualStance(
@@ -260,6 +313,10 @@ const initialState = {
   activeBattles: {} as Record<string, ActiveBattle>,
   garrisons: {} as Record<string, Composition>,
   wars: {} as Record<string, War>,
+  leaders: {} as Record<string, Leader>,
+  historicalFired: {} as Record<string, true>,
+  cinematicQueue: [] as CinematicCard[],
+  lastChapterYear: null as number | null,
   pendingDecision: null as PendingDecision | null,
   peaceDialogWarId: null as string | null,
   declareWarTargetId: null as string | null,
@@ -303,6 +360,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const brains: Record<string, AIBrain> = {};
       const control: Record<string, number> = {};
       const populations: Record<string, number> = {};
+      const leaders: Record<string, Leader> = {};
       const order: string[] = [];
       for (const c of countries) {
         byId[c.id] = c;
@@ -311,6 +369,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         brains[c.id] = newBrain();
         control[c.id] = BALANCE_CONTROL.fullControl;
         populations[c.id] = c.population;
+        leaders[c.id] = generateLeader(c);
         order.push(c.id);
       }
       set({
@@ -321,6 +380,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         brains,
         control,
         populations,
+        leaders,
         geo,
         loaded: true,
         loading: false,
@@ -484,6 +544,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       activeBattles: s.activeBattles,
       garrisons: s.garrisons,
       wars: s.wars,
+      historicalFired: s.historicalFired,
       playerCountryId: s.playerCountryId,
       homeCountryId: s.homeCountryId,
       rng: Math.random,
@@ -537,6 +598,63 @@ export const useGameStore = create<GameState>((set, get) => ({
       paused = true;
     }
 
+    // Build the cinematic queue.
+    const newCinematics: CinematicCard[] = [];
+    if (result.historicalEvent) {
+      newCinematics.push({
+        kind: 'historical',
+        event: result.historicalEvent,
+        shownAt: performance.now(),
+      });
+    }
+    // Chapter card on first tick of a new in-game year (after January).
+    let lastChapterYear = s.lastChapterYear;
+    if (
+      result.date.year !== s.date.year &&
+      result.date.year !== lastChapterYear
+    ) {
+      const chapterTitle = pickChapterTitle(result.date.year, result.wars);
+      if (chapterTitle) {
+        newCinematics.push({
+          kind: 'chapter',
+          year: result.date.year,
+          title: chapterTitle,
+          shownAt: performance.now(),
+        });
+        lastChapterYear = result.date.year;
+      }
+    }
+    // War declared on player → cinematic card too, replacing the toast feel.
+    if (result.aiDeclaredWarOnPlayer.length > 0 && s.playerCountryId) {
+      newCinematics.push({
+        kind: 'war_declared',
+        aggressorId: result.aiDeclaredWarOnPlayer[0],
+        defenderId: s.playerCountryId,
+        shownAt: performance.now(),
+      });
+    }
+    // Capital fell? Detect by comparing ownership[homeId] before/after.
+    for (const [homeId] of Object.entries(s.ownership)) {
+      if (homeId !== homeId) continue; // homeId is the country's "self" tile
+      const beforeOwner = s.ownership[homeId];
+      const afterOwner = result.ownership[homeId];
+      if (
+        beforeOwner !== afterOwner &&
+        afterOwner !== homeId &&
+        beforeOwner === homeId
+      ) {
+        newCinematics.push({
+          kind: 'capital_fell',
+          fallenId: homeId,
+          conquerorId: afterOwner,
+          shownAt: performance.now(),
+        });
+      }
+    }
+
+    const cinematicQueue = [...s.cinematicQueue, ...newCinematics];
+    if (newCinematics.length > 0) paused = true;
+
     set({
       date: result.date,
       tickCount: s.tickCount + 1,
@@ -551,6 +669,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       activeBattles: result.activeBattles,
       garrisons: result.garrisons,
       wars: result.wars,
+      historicalFired: result.historicalFired,
+      cinematicQueue,
+      lastChapterYear,
       pendingDecision,
       paused,
       eventLog,
@@ -841,6 +962,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     ensureTickInterval(get);
   },
 
+  dismissCinematic: () => {
+    const queue = get().cinematicQueue;
+    if (queue.length === 0) return;
+    const next = queue.slice(1);
+    set({ cinematicQueue: next });
+    if (next.length === 0) ensureTickInterval(get);
+  },
+
   proposeAlliance: (targetId) => {
     const { playerCountryId, nations, brains } = get();
     if (!playerCountryId || playerCountryId === targetId) return;
@@ -1095,6 +1224,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const brains: Record<string, AIBrain> = {};
     const control: Record<string, number> = {};
     const populations: Record<string, number> = {};
+    const leaders: Record<string, Leader> = {};
     for (const id of countryOrder) {
       const c = countries[id];
       if (!c) continue;
@@ -1103,6 +1233,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       brains[id] = newBrain();
       control[id] = BALANCE_CONTROL.fullControl;
       populations[id] = c.population;
+      leaders[id] = generateLeader(c);
     }
     set({
       ...initialState,
@@ -1114,6 +1245,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       brains,
       control,
       populations,
+      leaders,
       loaded: true,
       savedSummary: null,
     });

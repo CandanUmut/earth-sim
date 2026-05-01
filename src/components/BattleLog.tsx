@@ -1,10 +1,31 @@
 import { ScrollText, ChevronDown, ChevronUp } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
+import type { BattleLogEntry } from '../game/tick';
 
 function fmtNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
   return Math.round(n).toLocaleString();
+}
+
+/** Translate a battle into one line of military prose. The numbers below give
+ *  the precision; this gives the *feeling*. */
+function battleNarrative(b: BattleLogEntry, place: string): string {
+  const total = b.totalAttackerLosses + b.totalDefenderLosses;
+  const startTotal = b.attackerTroopsBefore + b.defenderTroopsBefore;
+  const intensity = startTotal > 0 ? total / startTotal : 0;
+  const heavy = intensity > 0.55;
+  if (b.conquered) {
+    return heavy ? `${place} falls — a hard-fought conquest.` : `${place} falls.`;
+  }
+  if (b.attackerWon) {
+    if (b.controlAfter <= 25) return `The walls of ${place} buckle.`;
+    if (heavy) return `A bloody push at ${place} — the line gives ground.`;
+    return `Ground gained at ${place}.`;
+  }
+  // Defender won
+  if (heavy) return `${place} holds, at a terrible price.`;
+  return `The assault on ${place} is broken.`;
 }
 
 export default function BattleLog() {
@@ -102,6 +123,7 @@ export default function BattleLog() {
                 : b.attackerWon
                   ? `— pushed in (control ${b.controlAfter})`
                   : '— repelled by';
+              const narrative = battleNarrative(b, place);
               return (
                 <div
                   key={b.id}
@@ -114,18 +136,25 @@ export default function BattleLog() {
                       : 'transparent',
                   }}
                 >
-                  <div style={{ fontSize: 13, lineHeight: 1.3 }}>
-                    <strong>{attacker}</strong> →{' '}
-                    <span style={{ fontStyle: 'italic' }}>{place}</span>{' '}
-                    <span
-                      style={{
-                        color: accent,
-                        fontWeight: b.conquered ? 600 : 400,
-                      }}
-                    >
-                      {verdict}
-                    </span>{' '}
-                    {!b.attackerWon && <strong>{defender}</strong>}
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontStyle: 'italic',
+                      color: accent,
+                      lineHeight: 1.3,
+                      marginBottom: 2,
+                    }}
+                  >
+                    {narrative}
+                  </div>
+                  <div style={{ fontSize: 12, lineHeight: 1.3, color: 'var(--ink-faded)' }}>
+                    <strong style={{ color: 'var(--ink)' }}>{attacker}</strong>{' '}
+                    {b.attackerWon ? '→' : 'vs.'}{' '}
+                    <strong style={{ color: 'var(--ink)' }}>
+                      {b.attackerWon ? place : defender}
+                    </strong>
+                    {' '}
+                    <span style={{ fontStyle: 'italic' }}>{verdict}</span>
                   </div>
                   <div
                     className="num"
@@ -135,12 +164,8 @@ export default function BattleLog() {
                       marginTop: 2,
                     }}
                   >
-                    Atk −{fmtNum(b.totalAttackerLosses)}
-                    {' ('}
-                    {fmtNum(b.attackerLosses.infantry)}i ·{' '}
-                    {fmtNum(b.attackerLosses.cavalry)}c ·{' '}
-                    {fmtNum(b.attackerLosses.artillery)}a) · Def −
-                    {fmtNum(b.totalDefenderLosses)}
+                    −{fmtNum(b.totalAttackerLosses)} attacking ·
+                    {' '}−{fmtNum(b.totalDefenderLosses)} defending
                   </div>
                 </div>
               );
